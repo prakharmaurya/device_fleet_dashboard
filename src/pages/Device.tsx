@@ -248,7 +248,7 @@ export default function Device() {
                     <Tooltip
                       contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
                       labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                      formatter={(v: number) => [v === 1 ? 'Online' : 'Offline', 'Status']}
+                      formatter={(v) => [Number(v) === 1 ? 'Online' : 'Offline', 'Status']}
                     />
                     <Line type="stepAfter" dataKey="v" stroke="#60a5fa" dot={false} strokeWidth={2} />
                   </LineChart>
