@@ -24,7 +24,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <aside className="w-56 flex-shrink-0 bg-slate-950 border-r border-slate-800 flex flex-col">
         <div className="px-4 py-5 border-b border-slate-800 flex items-center gap-2">
           <Cpu size={20} className="text-blue-400" />
-          <span className="font-semibold text-white tracking-tight">AquaSave Fleet</span>
+          <span className="font-semibold text-white tracking-tight">Tanki Meter Fleet</span>
         </div>
         <nav className="flex-1 py-4 space-y-1 px-2">
           {NAV.map(({ to, label, icon: Icon }) => (

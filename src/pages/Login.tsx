@@ -39,7 +39,7 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="flex items-center justify-center gap-2 mb-8">
           <Cpu size={28} className="text-blue-400" />
-          <h1 className="text-xl font-bold text-white">AquaSave Fleet</h1>
+          <h1 className="text-xl font-bold text-white">Tanki Meter Fleet</h1>
         </div>
 
         <form
