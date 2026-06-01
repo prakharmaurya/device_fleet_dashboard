@@ -48,7 +48,7 @@ function R2Upload({ onUploaded }: { onUploaded: (url: string, version: string) =
         <Upload size={14} /> Upload to R2
       </h3>
       <p className="text-xs text-slate-500">
-        Filename must be <code className="text-blue-400">tankimeter-tank-vX.Y.Z.bin</code>.
+        Filename must be <code className="text-blue-400">tankimeter-vX.Y.Z.bin</code>.
         Version extracted automatically; URL pre-filled in register form.
       </p>
       <label className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer transition-colors ${uploading ? 'opacity-50 pointer-events-none' : 'bg-slate-700 hover:bg-slate-600'}`}>
@@ -218,7 +218,7 @@ export default function Firmware() {
           <div>
             <label className="block text-xs text-slate-400 mb-1">Firmware URL <span className="text-slate-500">(must start with {OTA_PREFIX})</span></label>
             <input required type="url" value={url} onChange={(e) => setUrl(e.target.value)}
-              placeholder={`${OTA_PREFIX}tank/v0.3.0/tankimeter-tank-v0.3.0.bin`}
+              placeholder={`${OTA_PREFIX}tank/v0.3.0/tankimeter-v0.3.0.bin`}
               className="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono" />
           </div>
           <div className="flex gap-2 justify-end">
