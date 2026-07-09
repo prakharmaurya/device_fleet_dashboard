@@ -17,6 +17,11 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | null>(null)
 
+let externalLogout: (() => void) | null = null
+export function triggerLogout() {
+  externalLogout?.()
+}
+
 function loadUser(): AuthUser | null {
   try {
     const raw = localStorage.getItem('user')
@@ -41,6 +46,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('user')
     setUser(null)
   }
+
+  externalLogout = logout
 
   return <Ctx.Provider value={{ user, setAuth, logout }}>{children}</Ctx.Provider>
 }

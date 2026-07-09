@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { triggerLogout } from '../lib/AuthContext'
 
 const BASE = import.meta.env.DEV ? '/api' : 'https://v2api.iot.inflection.org.in'
 
@@ -13,10 +14,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+    const isLoginRequest = err.config?.url?.includes('/users/login')
+    if (err.response?.status === 401 && !isLoginRequest) {
+      triggerLogout()
     }
     return Promise.reject(err)
   },
