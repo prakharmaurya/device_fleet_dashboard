@@ -11,7 +11,7 @@ import {
 } from '../api/devices'
 import { listReleases, pushOTA } from '../api/firmware'
 import { pgStr, pgTime } from '../api/client'
-import { PUMP_STATE_LABEL } from '../api/types'
+import { PUMP_STATE_LABEL, type HwStatus } from '../api/types'
 import StatusBadge from '../components/StatusBadge'
 import Layout from '../components/Layout'
 
@@ -145,6 +145,31 @@ export default function Device() {
             </div>
           ) : (
             <p className="text-slate-400 text-sm">No telemetry yet.</p>
+          )}
+
+          {/* Hardware health */}
+          {t && (
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+              <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Hardware Health</h3>
+              {t.hw_status ? (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <HwCard label="LoRa" status={t.hw_status.lora} />
+                    <HwCard label="Power Meter" status={t.hw_status.power_meter} />
+                    <HwCard label="LCD" status={t.hw_status.lcd} />
+                    <HwCard label="NVS" status={t.hw_status.nvs} />
+                  </div>
+                  <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                    <InfoRow label="Last Reset Reason" value={t.reset_reason || '—'} mono />
+                    <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count)} />
+                    <InfoRow label="Free Heap" value={`${(t.free_heap / 1024).toFixed(1)} KB`} />
+                    <InfoRow label="Min Free Heap" value={`${(t.min_free_heap / 1024).toFixed(1)} KB`} />
+                  </dl>
+                </>
+              ) : (
+                <p className="text-slate-500 text-xs">No hw_status yet — needs firmware with 2026-07-23 telemetry update.</p>
+              )}
+            </div>
           )}
 
           {/* Device info */}
@@ -388,6 +413,19 @@ function TCard({ label, value, accent = 'default' }: {
       <p className="text-xs text-slate-400 mb-1">{label}</p>
       <p className={`text-lg font-semibold ${accent === 'green' ? 'text-green-400' : 'text-white'}`}>
         {value}
+      </p>
+    </div>
+  )
+}
+
+function HwCard({ label, status }: { label: string; status: HwStatus[keyof HwStatus] }) {
+  const ok = status === 'ok'
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-3">
+      <p className="text-xs text-slate-400 mb-1">{label}</p>
+      <p className={`text-sm font-semibold flex items-center gap-1.5 ${ok ? 'text-green-400' : 'text-red-400'}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-green-400' : 'bg-red-400'}`} />
+        {status}
       </p>
     </div>
   )

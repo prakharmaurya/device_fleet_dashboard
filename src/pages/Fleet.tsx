@@ -4,6 +4,7 @@ import { RefreshCw } from 'lucide-react'
 import { listDevices } from '../api/devices'
 import { pgStr, pgTime } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
+import HwHealthDot from '../components/HwHealthDot'
 import Layout from '../components/Layout'
 
 export default function Fleet() {
@@ -53,6 +54,7 @@ export default function Fleet() {
               <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 text-left">Serial ID</th>
                 <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Health</th>
                 <th className="px-4 py-3 text-left">Firmware</th>
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Last Seen</th>
@@ -69,6 +71,9 @@ export default function Fleet() {
                   <td className="px-4 py-3">
                     <StatusBadge online={d.is_online} />
                   </td>
+                  <td className="px-4 py-3">
+                    <HwHealthDot hwStatus={d.hw_status} />
+                  </td>
                   <td className="px-4 py-3 text-slate-300">{pgStr(d.current_fw)}</td>
                   <td className="px-4 py-3 text-slate-400">{d.device_type}</td>
                   <td className="px-4 py-3 text-slate-400">{pgTime(d.last_seen_at)}</td>
@@ -76,7 +81,7 @@ export default function Fleet() {
               ))}
               {devices.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                     No devices found.
                   </td>
                 </tr>

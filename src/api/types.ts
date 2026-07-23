@@ -11,6 +11,21 @@ export interface LoginResponse {
   token_expires_at: string
 }
 
+// Per-component firmware health snapshot. Each field is "ok" or a
+// component-specific fault string ("fault" / "degraded"). null until the
+// device has sent its first telemetry since the hw_status rollout.
+export interface HwStatus {
+  lora: string
+  power_meter: string
+  lcd: string
+  nvs: string
+}
+
+export function hwStatusHasFault(hw: HwStatus | null | undefined): boolean {
+  if (!hw) return false
+  return hw.lora !== 'ok' || hw.power_meter !== 'ok' || hw.lcd !== 'ok' || hw.nvs !== 'ok'
+}
+
 export interface Device {
   id: number
   serial_id: string
@@ -19,6 +34,7 @@ export interface Device {
   is_online: boolean
   current_fw: string | null
   last_seen_at: string | null
+  hw_status?: HwStatus | null
   fw?: string
   mac?: string | null
   claimed_at?: string | null
@@ -38,6 +54,11 @@ export interface Telemetry {
   frequency: number
   wifi_rssi: number
   fw_version: string
+  hw_status?: HwStatus | null
+  reset_reason: string
+  free_heap: number
+  min_free_heap: number
+  lora_reset_count: number
 }
 
 export interface AdminDeviceDetail extends Device {
