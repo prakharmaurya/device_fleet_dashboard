@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, RefreshCw, Zap, Terminal, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft, RefreshCw, Zap, Terminal, Trash2,
+  CheckCircle2, Play, Square, Settings, Wifi, ShieldAlert,
+  Monitor, Volume2, Search, Power, Clock
+} from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
@@ -11,7 +15,12 @@ import {
 } from '../api/devices'
 import { listReleases, pushOTA } from '../api/firmware'
 import { pgStr, pgTime } from '../api/client'
-import { PUMP_STATE_LABEL, type HwStatus } from '../api/types'
+import {
+  PUMP_STATE_LABEL, type HwStatus, type FaultEventData,
+  type FaultClearedEventData, type CommandEventData,
+  type ConfigChangeEventData, type PumpStateEventData,
+  type PowerEventData
+} from '../api/types'
 import StatusBadge from '../components/StatusBadge'
 import Layout from '../components/Layout'
 
@@ -28,6 +37,8 @@ export default function Device() {
   const [hours, setHours] = useState(24)
   const [otaUrl, setOtaUrl] = useState('')
   const [cmdResult, setCmdResult] = useState<string | null>(null)
+  const [eventCategory, setEventCategory] = useState<string>('all')
+  const [eventSearch, setEventSearch] = useState<string>('')
 
   const { data: device, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-device', deviceId],
@@ -44,7 +55,7 @@ export default function Device() {
   const { data: events } = useQuery({
     queryKey: ['admin-device-events', deviceId],
     queryFn: () => getAdminDeviceEvents(deviceId),
-    enabled: tab === 'events',
+    refetchInterval: 15_000,
   })
 
   const { data: releases } = useQuery({
@@ -84,6 +95,12 @@ export default function Device() {
   if (isError || !device) return <Layout><div className="text-red-400 text-sm">Device not found.</div></Layout>
 
   const t = device.telemetry
+  const latestFaultEvent = (events ?? []).find(
+    (e) => e.event_type === 'fault' || e.event_type === 'fault_cleared'
+  )
+  const isFaultActive = latestFaultEvent?.event_type === 'fault'
+  const activeFault = isFaultActive ? (latestFaultEvent?.data as FaultEventData) : null
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'history', label: 'History' },
@@ -130,6 +147,40 @@ export default function Device() {
       {/* Overview */}
       {tab === 'overview' && (
         <div className="space-y-4">
+          {/* Active Fault Alert Banner */}
+          {activeFault && (
+            <div className="bg-red-950/80 border-2 border-red-600 rounded-xl p-4 shadow-lg text-white">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-red-600 text-white font-bold rounded text-xs animate-pulse flex items-center gap-1">
+                      <ShieldAlert size={13} /> ACTIVE FAULT: {activeFault.code}
+                    </span>
+                    <span className="font-semibold text-red-200 text-base">{activeFault.name}</span>
+                  </div>
+                  <p className="text-sm text-red-300">{activeFault.description}</p>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-red-300/90 pt-1">
+                    <span className="flex items-center gap-1 text-red-400 font-medium">
+                      <Volume2 size={13} /> Alarm Pattern: <strong className="text-red-200">{activeFault.buzzer}</strong>
+                    </span>
+                    <span>
+                      <strong className="text-red-200">Action Taken:</strong> {activeFault.action_taken}
+                    </span>
+                  </div>
+                  {activeFault.readings && (
+                    <div className="flex flex-wrap gap-3 text-xs font-mono bg-black/40 px-3 py-1.5 rounded-md border border-red-800/40 w-fit mt-1">
+                      {activeFault.readings.voltage !== undefined && <span>V: {activeFault.readings.voltage.toFixed(1)}V</span>}
+                      {activeFault.readings.current !== undefined && <span>I: {activeFault.readings.current.toFixed(2)}A</span>}
+                      {activeFault.readings.active_power !== undefined && <span>P: {activeFault.readings.active_power.toFixed(1)}W</span>}
+                      {activeFault.readings.tank_level !== undefined && <span>Level: {activeFault.readings.tank_level.toFixed(1)}%</span>}
+                    </div>
+                  )}
+                </div>
+                <SimulatedLCD line1={activeFault.lcd_line1} line2={activeFault.lcd_line2} />
+              </div>
+            </div>
+          )}
+
           {/* Telemetry cards */}
           {t ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -248,9 +299,46 @@ export default function Device() {
       {/* Events */}
       {tab === 'events' && (
         <div className="space-y-4">
+          {/* Category Filter Pills and Search */}
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-1.5 bg-slate-900/60 p-1.5 rounded-lg border border-slate-700/60">
+              {[
+                { id: 'all', label: 'All Events' },
+                { id: 'fault', label: '🚨 Faults' },
+                { id: 'command', label: '⚡ Commands' },
+                { id: 'config', label: '⚙️ Config' },
+                { id: 'pump', label: '🔄 Pump' },
+                { id: 'power', label: '🔌 Power & Boot' },
+                { id: 'network', label: '🌐 Connectivity' },
+              ].map(({ id: cid, label }) => (
+                <button
+                  key={cid}
+                  onClick={() => setEventCategory(cid)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    eventCategory === cid
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full md:w-64">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                value={eventSearch}
+                onChange={(e) => setEventSearch(e.target.value)}
+                placeholder="Search events, commands, users..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
           {/* Online/offline timeline chart */}
           {(events ?? []).length > 0 && (() => {
-            // Build step series: online=1, offline=0, sorted oldest→newest
             const sorted = [...(events ?? [])].reverse()
             const stepData = sorted
               .filter((ev) => ev.event_type === 'online' || ev.event_type === 'offline')
@@ -261,7 +349,7 @@ export default function Device() {
             return stepData.length > 0 ? (
               <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
                 <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Online / Offline Timeline</h4>
-                <ResponsiveContainer width="100%" height={120}>
+                <ResponsiveContainer width="100%" height={100}>
                   <LineChart data={stepData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#94a3b8' }} interval="preserveStartEnd" />
@@ -282,36 +370,37 @@ export default function Device() {
             ) : null
           })()}
 
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase tracking-wide">
-                  <th className="px-4 py-3 text-left">Time</th>
-                  <th className="px-4 py-3 text-left">Event</th>
-                  <th className="px-4 py-3 text-left">Data</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(events ?? []).map((ev) => (
-                  <tr key={ev.id} className="border-b border-slate-700/50">
-                    <td className="px-4 py-2 text-slate-400 whitespace-nowrap">{pgTime(ev.ts)}</td>
-                    <td className="px-4 py-2">
-                      <span className={`font-medium ${ev.event_type === 'online' ? 'text-green-400' : ev.event_type === 'offline' ? 'text-red-400' : 'text-slate-200'}`}>
-                        {ev.event_type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-slate-400 font-mono text-xs">
-                      {ev.data ? JSON.stringify(ev.data) : '—'}
-                    </td>
-                  </tr>
-                ))}
-                {(events ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-slate-500">No events.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+          {/* Structured Audit Events Feed */}
+          <div className="space-y-3">
+            {(() => {
+              const filtered = (events ?? []).filter((ev) => {
+                if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared') return false
+                if (eventCategory === 'command' && ev.event_type !== 'command') return false
+                if (eventCategory === 'config' && ev.event_type !== 'config_change') return false
+                if (eventCategory === 'pump' && ev.event_type !== 'pump_state') return false
+                if (eventCategory === 'power' && ev.event_type !== 'power_restored' && ev.event_type !== 'device_reboot') return false
+                if (eventCategory === 'network' && ev.event_type !== 'online' && ev.event_type !== 'offline') return false
+
+                if (eventSearch.trim() !== '') {
+                  const q = eventSearch.toLowerCase()
+                  const str = `${ev.event_type} ${JSON.stringify(ev.data ?? '')} ${ev.ts ?? ''}`.toLowerCase()
+                  return str.includes(q)
+                }
+                return true
+              })
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center text-slate-500 text-sm">
+                    No matching events found.
+                  </div>
+                )
+              }
+
+              return filtered.map((ev) => (
+                <EventCard key={ev.id} ev={ev} />
+              ))
+            })()}
           </div>
         </div>
       )}
@@ -467,3 +556,277 @@ function ChartCard({ title, data, dataKey, color, stepLine = false, yDomain }: {
     </div>
   )
 }
+
+function SimulatedLCD({ line1, line2 }: { line1?: string; line2?: string }) {
+  return (
+    <div className="bg-emerald-950/90 border-2 border-emerald-600/80 rounded-lg p-2.5 shadow-inner font-mono text-emerald-300 select-none tracking-widest text-xs w-full max-w-[260px]">
+      <div className="flex items-center justify-between text-[10px] text-emerald-500/80 border-b border-emerald-800/60 pb-1 mb-1 uppercase font-sans">
+        <span className="flex items-center gap-1"><Monitor size={11} /> 16x2 LCD Display</span>
+        <span className="text-[9px] bg-emerald-900/80 px-1 py-0.2 rounded text-emerald-300">USER SCREEN</span>
+      </div>
+      <div className="bg-black/60 rounded p-1.5 border border-emerald-800/40 space-y-0.5">
+        <div className="whitespace-pre overflow-hidden text-[11px] leading-tight text-emerald-400">{line1 || '                '}</div>
+        <div className="whitespace-pre overflow-hidden text-[11px] font-bold text-emerald-200 leading-tight">{line2 || '                '}</div>
+      </div>
+    </div>
+  )
+}
+
+function EventCard({ ev }: { ev: any }) {
+  const t = pgTime(ev.ts)
+  const d = (ev.data || {}) as Record<string, any>
+
+  switch (ev.event_type) {
+    case 'fault': {
+      const fault = d as FaultEventData
+      return (
+        <div className="bg-slate-800 rounded-xl border border-red-900/50 border-l-4 border-l-red-500 p-4 shadow-sm transition-all hover:border-red-700/60">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="space-y-1.5 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2 py-0.5 bg-red-600/90 text-white font-bold rounded text-xs flex items-center gap-1">
+                  <ShieldAlert size={12} /> FAULT {fault.code || 'ALERT'}
+                </span>
+                <span className="text-base font-semibold text-red-200">{fault.name || 'Safety Protection Trip'}</span>
+                <span className="text-xs text-slate-400 flex items-center gap-1 ml-auto">
+                  <Clock size={12} /> {t}
+                </span>
+              </div>
+              <p className="text-sm text-slate-300">{fault.description}</p>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 pt-1">
+                {fault.buzzer && (
+                  <span className="flex items-center gap-1 text-amber-400">
+                    <Volume2 size={12} /> {fault.buzzer}
+                  </span>
+                )}
+                {fault.action_taken && (
+                  <span>
+                    <strong className="text-slate-300">Action:</strong> {fault.action_taken}
+                  </span>
+                )}
+              </div>
+              {fault.readings && (
+                <div className="flex flex-wrap gap-2 text-xs font-mono bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/60 w-fit mt-1">
+                  {fault.readings.voltage !== undefined && <span className="text-amber-300">{fault.readings.voltage.toFixed(1)}V</span>}
+                  {fault.readings.current !== undefined && <span className="text-pink-300">{fault.readings.current.toFixed(2)}A</span>}
+                  {fault.readings.active_power !== undefined && <span className="text-emerald-300">{fault.readings.active_power.toFixed(0)}W</span>}
+                  {fault.readings.tank_level !== undefined && <span className="text-blue-300">Tank: {fault.readings.tank_level.toFixed(1)}%</span>}
+                  {fault.readings.runtime_s !== undefined && <span className="text-purple-300">{fault.readings.runtime_s}s</span>}
+                </div>
+              )}
+            </div>
+            {(fault.lcd_line1 || fault.lcd_line2) && (
+              <SimulatedLCD line1={fault.lcd_line1} line2={fault.lcd_line2} />
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    case 'fault_cleared': {
+      const clear = d as FaultClearedEventData
+      return (
+        <div className="bg-slate-800 rounded-xl border border-emerald-900/40 border-l-4 border-l-emerald-500 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-emerald-700 text-white font-semibold rounded text-xs flex items-center gap-1">
+                <CheckCircle2 size={12} /> CLEARED
+              </span>
+              <span className="text-sm font-medium text-emerald-200">
+                Fault {clear.cleared_fault || 'Resolved'} cleared — system restored to normal
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    case 'command': {
+      const cmd = d as CommandEventData
+      const isSuccess = cmd.status === 'success'
+      return (
+        <div className="bg-slate-800 rounded-xl border border-purple-900/40 border-l-4 border-l-purple-500 p-3.5 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2 py-0.5 bg-purple-700 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
+                <Terminal size={12} /> {String(cmd.command).toUpperCase()}
+              </span>
+              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isSuccess ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                {cmd.status.toUpperCase()}
+              </span>
+              {cmd.execution_ms !== undefined && (
+                <span className="text-xs text-slate-400 font-mono">{cmd.execution_ms}ms</span>
+              )}
+              <span className="text-xs text-slate-400">
+                by <strong className="text-slate-200">{cmd.sender_email || 'User #' + cmd.sender_user_id}</strong>
+                {cmd.sender_role && <span className="text-slate-500 ml-1">({cmd.sender_role})</span>}
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+          {cmd.response !== undefined && cmd.response !== null && (
+            <div className="mt-2 text-xs text-slate-400 bg-slate-900/80 p-2 rounded border border-slate-700/60 font-mono overflow-auto max-h-24">
+              {typeof cmd.response === 'string' ? String(cmd.response) : JSON.stringify(cmd.response)}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    case 'config_change': {
+      const cfg = d as ConfigChangeEventData
+      const isSuccess = cfg.status === 'success'
+      return (
+        <div className="bg-slate-800 rounded-xl border border-amber-900/40 border-l-4 border-l-amber-500 p-3.5 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2 py-0.5 bg-amber-700 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
+                <Settings size={12} /> {cfg.config_name}
+              </span>
+              <span className="text-xs text-amber-200 font-semibold">
+                Set to: <span className="font-mono">{cfg.value}</span>
+              </span>
+              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isSuccess ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
+                {cfg.status.toUpperCase()}
+              </span>
+              <span className="text-xs text-slate-400">
+                by <strong className="text-slate-200">{cfg.sender_email || 'User #' + cfg.sender_user_id}</strong>
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    case 'pump_state': {
+      const p = d as PumpStateEventData
+      const isRunning = p.to_state === 2 || p.to_state === 3
+      return (
+        <div className={`bg-slate-800 rounded-xl border p-3.5 shadow-sm ${
+          isRunning
+            ? 'border-emerald-900/40 border-l-4 border-l-emerald-500'
+            : 'border-slate-700 border-l-4 border-l-slate-500'
+        }`}>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`px-2 py-0.5 text-white font-bold rounded text-xs flex items-center gap-1 ${
+                isRunning ? 'bg-emerald-600' : 'bg-slate-600'
+              }`}>
+                {isRunning ? <Play size={11} /> : <Square size={11} />}
+                {p.state_label || (isRunning ? 'PUMP STARTED' : 'PUMP STOPPED')}
+              </span>
+              <span className="text-xs text-slate-300">
+                Trigger: <strong className="text-white font-mono">{p.trigger_source}</strong>
+              </span>
+              {!isRunning && p.runtime_s !== undefined && (
+                <span className="text-xs text-slate-400">
+                  Ran for: <strong className="text-slate-200">{Math.floor(p.runtime_s / 60)}m {p.runtime_s % 60}s</strong>
+                </span>
+              )}
+              {p.stop_reason && (
+                <span className="text-xs bg-slate-900 px-2 py-0.5 rounded text-slate-300 font-medium">
+                  Reason: {p.stop_reason}
+                </span>
+              )}
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+          {(p.voltage !== undefined || p.current !== undefined || p.tank_level !== undefined) && (
+            <div className="flex flex-wrap gap-3 text-xs font-mono text-slate-400 mt-2 bg-slate-900/60 px-2.5 py-1 rounded w-fit">
+              {p.voltage !== undefined && <span>{p.voltage.toFixed(1)}V</span>}
+              {p.current !== undefined && <span>{p.current.toFixed(2)}A</span>}
+              {p.tank_level !== undefined && <span>Tank: {p.tank_level.toFixed(1)}%</span>}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    case 'power_restored':
+    case 'device_reboot': {
+      const pow = d as PowerEventData
+      const isPowerRestored = ev.event_type === 'power_restored'
+      return (
+        <div className="bg-slate-800 rounded-xl border border-yellow-900/40 border-l-4 border-l-yellow-500 p-3.5 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2 py-0.5 bg-yellow-600 text-black font-bold rounded text-xs flex items-center gap-1">
+                <Power size={11} /> {isPowerRestored ? 'POWER RESTORED' : 'DEVICE REBOOT'}
+              </span>
+              <span className="text-sm font-semibold text-yellow-200 font-mono">
+                {pow.reset_reason || 'RESET'}
+              </span>
+              <span className="text-xs text-slate-300">{pow.explanation}</span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+          {(pow.fw_version || pow.ip_address || pow.network_ssid) && (
+            <div className="flex flex-wrap gap-3 text-xs text-slate-400 font-mono mt-1.5">
+              {pow.fw_version && <span>FW: {pow.fw_version}</span>}
+              {pow.ip_address && <span>IP: {pow.ip_address}</span>}
+              {pow.network_ssid && <span>SSID: {pow.network_ssid}</span>}
+              {pow.free_heap && <span>Heap: {Math.round(pow.free_heap / 1024)}KB</span>}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    case 'online':
+    case 'offline': {
+      const isOnline = ev.event_type === 'online'
+      return (
+        <div className={`bg-slate-800 rounded-xl border p-3 shadow-sm ${
+          isOnline
+            ? 'border-green-900/30 border-l-4 border-l-green-500'
+            : 'border-red-900/30 border-l-4 border-l-red-500'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 text-white font-bold rounded text-xs flex items-center gap-1 ${
+                isOnline ? 'bg-green-600' : 'bg-red-600'
+              }`}>
+                <Wifi size={11} /> {isOnline ? 'ONLINE' : 'OFFLINE'}
+              </span>
+              <span className="text-xs text-slate-300">
+                {isOnline ? 'Device connected to cloud MQTT broker' : 'Device disconnected from network (LWT triggered)'}
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    default: {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-3 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-xs text-slate-300 font-bold">{ev.event_type}</span>
+            <span className="text-xs text-slate-400">{t}</span>
+          </div>
+          {ev.data && (
+            <pre className="mt-1 text-xs text-slate-400 font-mono overflow-auto max-h-20 bg-slate-900 p-2 rounded">
+              {JSON.stringify(ev.data, null, 2)}
+            </pre>
+          )}
+        </div>
+      )
+    }
+  }
+}
+

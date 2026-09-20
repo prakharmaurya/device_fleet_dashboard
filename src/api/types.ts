@@ -65,6 +65,76 @@ export interface AdminDeviceDetail extends Device {
   telemetry?: Telemetry
 }
 
+export interface FaultEventData {
+  code: string
+  name: string
+  lcd_line1: string
+  lcd_line2: string
+  buzzer: string
+  description: string
+  action_taken: string
+  readings?: {
+    voltage?: number
+    current?: number
+    active_power?: number
+    frequency?: number
+    tank_level?: number
+    runtime_s?: number
+  }
+}
+
+export interface FaultClearedEventData {
+  cleared_fault: string
+  voltage?: number
+  current?: number
+  tank_level?: number
+  pump_state?: number
+}
+
+export interface CommandEventData {
+  command: string
+  sender_user_id?: number
+  sender_email?: string
+  sender_role?: string
+  status: string
+  execution_ms?: number
+  response?: unknown
+}
+
+export interface ConfigChangeEventData {
+  config_name: string
+  value: number
+  sender_user_id?: number
+  sender_email?: string
+  sender_role?: string
+  status: string
+  execution_ms?: number
+  response?: unknown
+}
+
+export interface PumpStateEventData {
+  from_state: number
+  to_state: number
+  state_label: string
+  runtime_s: number
+  trigger_source: string
+  stop_reason?: string
+  voltage?: number
+  current?: number
+  active_power?: number
+  tank_level?: number
+}
+
+export interface PowerEventData {
+  reset_reason: string
+  explanation: string
+  fw_version?: string
+  ip_address?: string
+  network_ssid?: string
+  uptime_s?: number
+  free_heap?: number
+}
+
 export interface DeviceEvent {
   id: number
   serial_id: string
