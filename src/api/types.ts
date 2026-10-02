@@ -26,6 +26,36 @@ export function hwStatusHasFault(hw: HwStatus | null | undefined): boolean {
   return hw.lora !== 'ok' || hw.power_meter !== 'ok' || hw.lcd !== 'ok' || hw.nvs !== 'ok'
 }
 
+// Rich 14-byte v2 fleet diagnostic telemetry from the Tank-Top sensor
+export interface SensorTelemetry {
+  online: boolean
+  is_v2: boolean
+  raw_angle: number
+  agc: number
+  as5600_status: number
+  magnet_status: 'OK' | 'MISSING' | 'TOO_WEAK' | 'TOO_STRONG' | 'LEGACY' | 'OFFLINE'
+  magnet_degraded: boolean
+  sensor_fault: boolean
+  hall_full: boolean
+  calibrated: boolean
+  packet_seq: number
+  packet_loss_count: number
+  packet_loss_rate_pct: number
+  rf_signal_pct: number
+  rf_rssi_dbm: number
+  rf_snr_db: number
+}
+
+export function sensorTelemetryHasFault(st: SensorTelemetry | null | undefined): boolean {
+  if (!st) return false
+  return st.sensor_fault || st.magnet_status === 'MISSING' || !st.calibrated
+}
+
+export function sensorTelemetryHasWarning(st: SensorTelemetry | null | undefined): boolean {
+  if (!st) return false
+  return st.magnet_degraded || st.packet_loss_rate_pct > 20 || st.magnet_status === 'TOO_WEAK' || st.magnet_status === 'TOO_STRONG'
+}
+
 export interface Device {
   id: number
   serial_id: string
@@ -35,6 +65,7 @@ export interface Device {
   current_fw: string | null
   last_seen_at: string | null
   hw_status?: HwStatus | null
+  sensor_telemetry?: SensorTelemetry | null
   fw?: string
   mac?: string | null
   claimed_at?: string | null
@@ -55,6 +86,7 @@ export interface Telemetry {
   wifi_rssi: number
   fw_version: string
   hw_status?: HwStatus | null
+  sensor_telemetry?: SensorTelemetry | null
   reset_reason: string
   free_heap: number
   min_free_heap: number

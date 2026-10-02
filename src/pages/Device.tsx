@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, RefreshCw, Zap, Terminal, Trash2,
   CheckCircle2, Play, Square, Settings, Wifi, ShieldAlert,
-  Monitor, Volume2, Search, Power, Clock
+  Monitor, Volume2, Search, Power, Clock, Radio, AlertTriangle
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -95,6 +95,7 @@ export default function Device() {
   if (isError || !device) return <Layout><div className="text-red-400 text-sm">Device not found.</div></Layout>
 
   const t = device.telemetry
+  const st = t?.sensor_telemetry || device?.sensor_telemetry
   const latestFaultEvent = (events ?? []).find(
     (e) => e.event_type === 'fault' || e.event_type === 'fault_cleared'
   )
@@ -197,6 +198,145 @@ export default function Device() {
           ) : (
             <p className="text-slate-400 text-sm">No telemetry yet.</p>
           )}
+
+          {/* Tank-Top Sensor Telemetry & Diagnostics */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div className="flex items-center gap-2">
+                <Radio className="text-cyan-400" size={18} />
+                <h3 className="text-xs font-medium text-slate-300 uppercase tracking-wide">
+                  Tank-Top Sensor & LoRa Telemetry
+                </h3>
+                {st && (
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold uppercase ${
+                    st.is_v2 ? 'bg-cyan-900/60 text-cyan-300 border border-cyan-700/60' : 'bg-slate-700 text-slate-300'
+                  }`}>
+                    {st.is_v2 ? 'v2 Fleet Diagnostic (14B)' : 'v1 Legacy (8B)'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {st ? (
+                  <>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium flex items-center gap-1.5 ${
+                      st.online ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50' : 'bg-slate-700 text-slate-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${st.online ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                      {st.online ? 'RF Active' : 'RF Offline'}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                      st.magnet_status === 'OK'
+                        ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50'
+                        : st.magnet_status === 'MISSING'
+                        ? 'bg-red-900/60 text-red-200 border border-red-700/60 font-bold'
+                        : 'bg-amber-900/50 text-amber-300 border border-amber-700/50'
+                    }`}>
+                      Magnet: {st.magnet_status}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs text-slate-500">No sensor data received</span>
+                )}
+              </div>
+            </div>
+
+            {st ? (
+              <>
+                {/* Fault or Degraded Alert Banner */}
+                {st.sensor_fault && (
+                  <div className="mb-4 p-3 bg-red-950/70 border border-red-600 rounded-lg flex items-center gap-3 text-red-200 text-xs">
+                    <AlertTriangle className="text-red-400 shrink-0" size={18} />
+                    <div>
+                      <strong className="font-semibold text-white">AS5600 Angle Sensor Communication Fault!</strong>{' '}
+                      Top sensor cannot read magnetic encoder (detached or I2C bus error). Pump automation is safely gated.
+                    </div>
+                  </div>
+                )}
+                {st.magnet_degraded && !st.sensor_fault && (
+                  <div className="mb-4 p-3 bg-amber-950/60 border border-amber-600 rounded-lg flex items-center gap-3 text-amber-200 text-xs">
+                    <AlertTriangle className="text-amber-400 shrink-0" size={18} />
+                    <div>
+                      <strong className="font-semibold text-white">Magnet Alignment Degraded ({st.magnet_status}):</strong>{' '}
+                      Magnetic field strength is outside ideal range. Check mechanical sensor clearance on top of water tank.
+                    </div>
+                  </div>
+                )}
+                {!st.calibrated && (
+                  <div className="mb-4 p-2.5 bg-yellow-950/40 border border-yellow-700/60 rounded-lg flex items-center gap-2 text-yellow-300 text-xs">
+                    <AlertTriangle className="text-yellow-400 shrink-0" size={16} />
+                    <span>Uncalibrated sensor: Full/Empty angles not calibrated in EEPROM. Fallback percent used.</span>
+                  </div>
+                )}
+
+                {/* Metric Cards Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+                    <p className="text-xs text-slate-400 mb-1">12-bit Angle</p>
+                    <p className="text-lg font-semibold font-mono text-cyan-300">{st.raw_angle ?? 0} <span className="text-xs text-slate-400 font-sans">/ 4095</span></p>
+                    <p className="text-[11px] text-slate-400 mt-1">{(((st.raw_angle ?? 0) / 4095) * 360).toFixed(1)}° rotation</p>
+                  </div>
+                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+                    <p className="text-xs text-slate-400 mb-1">AGC & Field Gain</p>
+                    <p className="text-lg font-semibold font-mono text-white">{st.agc ?? 0} <span className="text-xs text-slate-400 font-sans">/ 255</span></p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {(st.agc ?? 0) < 50 ? 'Strong field' : (st.agc ?? 0) > 200 ? 'Weak field' : 'Nominal gain'}
+                    </p>
+                  </div>
+                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+                    <p className="text-xs text-slate-400 mb-1">Packet Loss Rate</p>
+                    <p className={`text-lg font-semibold font-mono ${
+                      (st.packet_loss_rate_pct ?? 0) > 20 ? 'text-red-400' : (st.packet_loss_rate_pct ?? 0) > 5 ? 'text-amber-400' : 'text-emerald-400'
+                    }`}>
+                      {(st.packet_loss_rate_pct ?? 0).toFixed(1)}%
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1">{st.packet_loss_count ?? 0} dropped · Seq #{st.packet_seq ?? 0}</p>
+                  </div>
+                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+                    <p className="text-xs text-slate-400 mb-1">LoRa RF Link</p>
+                    <p className={`text-lg font-semibold font-mono ${
+                      (st.rf_signal_pct ?? 0) >= 50 ? 'text-emerald-400' : (st.rf_signal_pct ?? 0) >= 25 ? 'text-amber-400' : 'text-red-400'
+                    }`}>
+                      {st.rf_signal_pct ?? 0}%
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1 font-mono">{st.rf_rssi_dbm ?? 0} dBm · SNR {(st.rf_snr_db ?? 0).toFixed(1)} dB</p>
+                  </div>
+                </div>
+
+                {/* Additional Diagnostic Attributes */}
+                <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-xs pt-1 border-t border-slate-700/60">
+                  <div>
+                    <dt className="text-slate-400">Calibration</dt>
+                    <dd className={`font-medium ${st.calibrated ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {st.calibrated ? 'Calibrated (EEPROM)' : 'Uncalibrated'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">End-Stop Sensor</dt>
+                    <dd className="font-medium text-slate-200">
+                      {st.hall_full ? 'HIGH (Tank Full Activated)' : 'LOW (Inactive)'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">AS5600 Status Reg</dt>
+                    <dd className="font-mono text-slate-200">
+                      0x{(st.as5600_status ?? 0).toString(16).toUpperCase().padStart(2, '0')}
+                      <span className="text-[10px] text-slate-400 font-sans ml-1">
+                        (MD: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'})
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">Telemetry Age</dt>
+                    <dd className="text-slate-200">
+                      {st.online ? 'Live (< 30s)' : 'Stale (> 30s)'}
+                    </dd>
+                  </div>
+                </dl>
+              </>
+            ) : (
+              <p className="text-slate-500 text-xs">No sensor telemetry available for this device yet.</p>
+            )}
+          </div>
 
           {/* Hardware health */}
           {t && (
@@ -374,7 +514,7 @@ export default function Device() {
           <div className="space-y-3">
             {(() => {
               const filtered = (events ?? []).filter((ev) => {
-                if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared') return false
+                if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared' && ev.event_type !== 'sensor_fault' && ev.event_type !== 'sensor_fault_cleared' && ev.event_type !== 'magnet_degraded') return false
                 if (eventCategory === 'command' && ev.event_type !== 'command') return false
                 if (eventCategory === 'config' && ev.event_type !== 'config_change') return false
                 if (eventCategory === 'pump' && ev.event_type !== 'pump_state') return false
@@ -640,6 +780,86 @@ function EventCard({ ev }: { ev: any }) {
               <Clock size={12} /> {t}
             </span>
           </div>
+        </div>
+      )
+    }
+
+    case 'sensor_fault': {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-red-900/60 border-l-4 border-l-red-500 p-4 shadow-sm transition-all">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="space-y-1.5 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2 py-0.5 bg-red-600 text-white font-bold rounded text-xs flex items-center gap-1">
+                  <AlertTriangle size={12} /> SENSOR FAULT
+                </span>
+                <span className="text-base font-semibold text-red-200">AS5600 Detached / Comm Error</span>
+                <span className="text-xs text-slate-400 flex items-center gap-1 ml-auto">
+                  <Clock size={12} /> {t}
+                </span>
+              </div>
+              <p className="text-sm text-slate-300">
+                {d.description || 'Tank-top magnetic rotary sensor detached or communication failure. Pump automation safely gated.'}
+              </p>
+              <div className="flex flex-wrap gap-2 text-xs font-mono bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/60 w-fit mt-1">
+                {d.magnet_status && <span className="text-red-300">Magnet: {d.magnet_status}</span>}
+                {d.packet_loss_count !== undefined && <span className="text-amber-300">Drops: {d.packet_loss_count}</span>}
+                {d.raw_angle !== undefined && <span className="text-cyan-300">RawAngle: {d.raw_angle}</span>}
+                {d.agc !== undefined && <span className="text-purple-300">AGC: {d.agc}</span>}
+                {d.protocol_version !== undefined && <span className="text-slate-400">Proto: v{d.protocol_version}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    case 'sensor_fault_cleared': {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-emerald-900/40 border-l-4 border-l-emerald-500 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-emerald-700 text-white font-semibold rounded text-xs flex items-center gap-1">
+                <CheckCircle2 size={12} /> SENSOR RESTORED
+              </span>
+              <span className="text-sm font-medium text-emerald-200">
+                {d.description || 'Tank-top sensor fault cleared — normal telemetry restored'}
+              </span>
+              {d.magnet_status && (
+                <span className="text-xs text-emerald-300 font-mono">({d.magnet_status})</span>
+              )}
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+        </div>
+      )
+    }
+
+    case 'magnet_degraded': {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-amber-900/50 border-l-4 border-l-amber-500 p-3.5 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-amber-600 text-white font-bold rounded text-xs flex items-center gap-1">
+                <AlertTriangle size={12} /> MAGNET DEGRADED
+              </span>
+              <span className="text-sm font-medium text-amber-200">
+                {d.description || `Magnet status degraded: ${d.magnet_status}`}
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+          {(d.agc !== undefined || d.raw_angle !== undefined) && (
+            <div className="mt-2 flex flex-wrap gap-3 text-xs font-mono text-slate-400">
+              {d.agc !== undefined && <span>AGC: {d.agc} / 255</span>}
+              {d.raw_angle !== undefined && <span>Angle: {d.raw_angle} / 4095</span>}
+              {d.magnet_status && <span>Status: {d.magnet_status}</span>}
+            </div>
+          )}
         </div>
       )
     }

@@ -5,6 +5,7 @@ import { listDevices } from '../api/devices'
 import { pgStr, pgTime } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import HwHealthDot from '../components/HwHealthDot'
+import SensorHealthDot from '../components/SensorHealthDot'
 import Layout from '../components/Layout'
 
 export default function Fleet() {
@@ -54,7 +55,7 @@ export default function Fleet() {
               <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 text-left">Serial ID</th>
                 <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Health</th>
+                <th className="px-4 py-3 text-left">Health (Base / Sensor)</th>
                 <th className="px-4 py-3 text-left">Firmware</th>
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Last Seen</th>
@@ -72,7 +73,12 @@ export default function Fleet() {
                     <StatusBadge online={d.is_online} />
                   </td>
                   <td className="px-4 py-3">
-                    <HwHealthDot hwStatus={d.hw_status} />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-400" title="Base station hardware">Base:</span>
+                      <HwHealthDot hwStatus={d.hw_status} />
+                      <span className="text-[11px] text-slate-400 ml-1.5" title="Tank-top sensor telemetry">Sensor:</span>
+                      <SensorHealthDot sensorTelemetry={d.sensor_telemetry} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-slate-300">{pgStr(d.current_fw)}</td>
                   <td className="px-4 py-3 text-slate-400">{d.device_type}</td>
