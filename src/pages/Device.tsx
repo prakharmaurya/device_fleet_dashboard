@@ -321,7 +321,7 @@ export default function Device() {
                     <dd className="font-mono text-slate-200">
                       0x{(st.as5600_status ?? 0).toString(16).toUpperCase().padStart(2, '0')}
                       <span className="text-[10px] text-slate-400 font-sans ml-1">
-                        (MD: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'})
+                        (MD: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'})
                       </span>
                     </dd>
                   </div>
