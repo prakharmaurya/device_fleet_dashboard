@@ -54,8 +54,9 @@ export default function Fleet() {
             <thead>
               <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 text-left">Serial ID</th>
+                <th className="px-4 py-3 text-left">Model / Rev</th>
                 <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Health (Base / Sensor)</th>
+                <th className="px-4 py-3 text-left">Health (Base / Overhead / Sump)</th>
                 <th className="px-4 py-3 text-left">Firmware</th>
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Last Seen</th>
@@ -69,6 +70,10 @@ export default function Fleet() {
                   className="border-b border-slate-700/50 hover:bg-slate-700/40 cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-3 font-mono text-blue-400">{d.serial_id}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                    <span className="font-semibold text-emerald-400">{d.model_id || 'TM-SUB-01'}</span>
+                    <span className="text-slate-500 ml-1">({d.hw_rev || 'HW-1.0'})</span>
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge online={d.is_online} />
                   </td>
@@ -76,8 +81,14 @@ export default function Fleet() {
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-400" title="Base station hardware">Base:</span>
                       <HwHealthDot hwStatus={d.hw_status} />
-                      <span className="text-[11px] text-slate-400 ml-1.5" title="Tank-top sensor telemetry">Sensor:</span>
+                      <span className="text-[11px] text-slate-400 ml-1.5" title="Overhead tank sensor">Overhead:</span>
                       <SensorHealthDot sensorTelemetry={d.sensor_telemetry} />
+                      {(Boolean(d.sump_telemetry) || (d.sump_level !== null && d.sump_level !== undefined && d.sump_level >= 0)) && (
+                        <>
+                          <span className="text-[11px] text-slate-400 ml-1.5" title="Sump tank sensor">Sump:</span>
+                          <SensorHealthDot sensorTelemetry={d.sump_telemetry} />
+                        </>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-300">{pgStr(d.current_fw)}</td>
@@ -87,7 +98,7 @@ export default function Fleet() {
               ))}
               {devices.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
                     No devices found.
                   </td>
                 </tr>

@@ -1,32 +1,170 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, RefreshCw, Zap, Terminal, Trash2,
   CheckCircle2, Play, Square, Settings, Wifi, ShieldAlert,
-  Monitor, Volume2, Search, Power, Clock, Radio, AlertTriangle
+  Monitor, Volume2, Search, Power, Clock, Radio, AlertTriangle,
+  Sliders, Save, Check, AlertCircle, Gauge, Waves
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import {
   getAdminDevice, getAdminDeviceHistory, getAdminDeviceEvents,
-  sendCommand, revokeMqttCache,
+  sendCommand, revokeMqttCache, getDeviceConfig, sendDeviceConfig,
 } from '../api/devices'
 import { listReleases, pushOTA } from '../api/firmware'
 import { pgStr, pgTime } from '../api/client'
 import {
-  PUMP_STATE_LABEL, type HwStatus, type FaultEventData,
+  PUMP_STATE_LABEL, type HwStatus, type SensorTelemetry, type FaultEventData,
   type FaultClearedEventData, type CommandEventData,
   type ConfigChangeEventData, type PumpStateEventData,
-  type PowerEventData
+  type PowerEventData, type AdminDeviceDetail
 } from '../api/types'
 import StatusBadge from '../components/StatusBadge'
 import Layout from '../components/Layout'
 
-type Tab = 'overview' | 'history' | 'events' | 'controls'
+type Tab = 'overview' | 'history' | 'events' | 'controls' | 'settings'
 
 const COMMANDS = ['on', 'off', 'f_on', 'status', 'reboot'] as const
+
+function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetry | null | undefined }) {
+  return (
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+        <div className="flex items-center gap-2">
+          <Radio className="text-cyan-400" size={18} />
+          <h3 className="text-xs font-medium text-slate-300 uppercase tracking-wide">
+            {title}
+          </h3>
+          {st && (
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded font-semibold uppercase bg-cyan-900/60 text-cyan-300 border border-cyan-700/60">
+              v{st.protocol_version || 2} Sensor Protocol
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {st ? (
+            <>
+              <span className={`text-xs px-2 py-0.5 rounded font-medium flex items-center gap-1.5 ${
+                st.online ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50' : 'bg-slate-700 text-slate-400'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${st.online ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                {st.online ? 'RF Active' : 'RF Offline'}
+              </span>
+              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                st.magnet_status === 'OK'
+                  ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50'
+                  : st.magnet_status === 'MISSING'
+                  ? 'bg-red-900/60 text-red-200 border border-red-700/60 font-bold'
+                  : 'bg-amber-900/50 text-amber-300 border border-amber-700/50'
+              }`}>
+                Magnet: {st.magnet_status}
+              </span>
+            </>
+          ) : (
+            <span className="text-xs text-slate-500">No sensor data received</span>
+          )}
+        </div>
+      </div>
+
+      {st ? (
+        <>
+          {st.sensor_fault && (
+            <div className="mb-4 p-3 bg-red-950/70 border border-red-600 rounded-lg flex items-center gap-3 text-red-200 text-xs">
+              <AlertTriangle className="text-red-400 shrink-0" size={18} />
+              <div>
+                <strong className="font-semibold text-white">AS5600 Angle Sensor Communication Fault!</strong>{' '}
+                Sensor cannot read magnetic encoder (detached or I2C bus error). Pump automation is safely gated.
+              </div>
+            </div>
+          )}
+          {st.magnet_degraded && !st.sensor_fault && (
+            <div className="mb-4 p-3 bg-amber-950/60 border border-amber-600 rounded-lg flex items-center gap-3 text-amber-200 text-xs">
+              <AlertTriangle className="text-amber-400 shrink-0" size={18} />
+              <div>
+                <strong className="font-semibold text-white">Magnet Alignment Degraded ({st.magnet_status}):</strong>{' '}
+                Magnetic field strength is outside ideal range. Check mechanical sensor clearance on top of water tank.
+              </div>
+            </div>
+          )}
+          {!st.calibrated && (
+            <div className="mb-4 p-2.5 bg-yellow-950/40 border border-yellow-700/60 rounded-lg flex items-center gap-2 text-yellow-300 text-xs">
+              <AlertTriangle className="text-yellow-400 shrink-0" size={16} />
+              <span>Uncalibrated sensor: Full/Empty angles not calibrated in EEPROM. Fallback percent used.</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+              <p className="text-xs text-slate-400 mb-1">12-bit Angle</p>
+              <p className="text-lg font-semibold font-mono text-cyan-300">{st.raw_angle ?? 0} <span className="text-xs text-slate-400 font-sans">/ 4095</span></p>
+              <p className="text-[11px] text-slate-400 mt-1">{(((st.raw_angle ?? 0) / 4095) * 360).toFixed(1)}° rotation</p>
+            </div>
+            <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+              <p className="text-xs text-slate-400 mb-1">AGC & Field Gain</p>
+              <p className="text-lg font-semibold font-mono text-white">{st.agc ?? 0} <span className="text-xs text-slate-400 font-sans">/ 255</span></p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                {(st.agc ?? 0) < 50 ? 'Strong field' : (st.agc ?? 0) > 200 ? 'Weak field' : 'Nominal gain'}
+              </p>
+            </div>
+            <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+              <p className="text-xs text-slate-400 mb-1">Packet Loss Rate</p>
+              <p className={`text-lg font-semibold font-mono ${
+                (st.packet_loss_rate_pct ?? 0) > 20 ? 'text-red-400' : (st.packet_loss_rate_pct ?? 0) > 5 ? 'text-amber-400' : 'text-emerald-400'
+              }`}>
+                {(st.packet_loss_rate_pct ?? 0).toFixed(1)}%
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">{st.packet_loss_count ?? 0} dropped · Seq #{st.packet_seq ?? 0}</p>
+            </div>
+            <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
+              <p className="text-xs text-slate-400 mb-1">LoRa RF Link</p>
+              <p className={`text-lg font-semibold font-mono ${
+                (st.rf_signal_pct ?? 0) >= 50 ? 'text-emerald-400' : (st.rf_signal_pct ?? 0) >= 25 ? 'text-amber-400' : 'text-red-400'
+              }`}>
+                {st.rf_signal_pct ?? 0}%
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1 font-mono">{st.rf_rssi_dbm ?? 0} dBm · SNR {(st.rf_snr_db ?? 0).toFixed(1)} dB</p>
+            </div>
+          </div>
+
+          <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-xs pt-1 border-t border-slate-700/60">
+            <div>
+              <dt className="text-slate-400">Calibration</dt>
+              <dd className={`font-medium ${st.calibrated ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                {st.calibrated ? 'Calibrated (EEPROM)' : 'Uncalibrated'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">End-Stop Sensor</dt>
+              <dd className="font-medium text-slate-200">
+                {st.hall_full ? 'HIGH (Tank Full Activated)' : 'LOW (Inactive)'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">AS5600 Status Reg</dt>
+              <dd className="font-mono text-slate-200">
+                0x{(st.as5600_status ?? 0).toString(16).toUpperCase().padStart(2, '0')}
+                <span className="text-[10px] text-slate-400 font-sans ml-1">
+                  (MD: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'})
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Telemetry Age</dt>
+              <dd className="text-slate-200">
+                {st.online ? 'Live (< 30s)' : 'Stale (> 30s)'}
+              </dd>
+            </div>
+          </dl>
+        </>
+      ) : (
+        <p className="text-slate-500 text-xs">No sensor telemetry available for this device yet.</p>
+      )}
+    </div>
+  )
+}
 
 export default function Device() {
   const { id } = useParams<{ id: string }>()
@@ -96,17 +234,23 @@ export default function Device() {
 
   const t = device.telemetry
   const st = t?.sensor_telemetry || device?.sensor_telemetry
+  const sumpSt = t?.sump_telemetry || device?.sump_telemetry
   const latestFaultEvent = (events ?? []).find(
     (e) => e.event_type === 'fault' || e.event_type === 'fault_cleared'
   )
   const isFaultActive = latestFaultEvent?.event_type === 'fault'
   const activeFault = isFaultActive ? (latestFaultEvent?.data as FaultEventData) : null
 
+  const hasSump = (t?.sump_level !== undefined && t?.sump_level !== null && t?.sump_level >= 0) ||
+    Boolean(sumpSt) ||
+    (device.capabilities?.monitored_tanks?.includes('sump') ?? false)
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'history', label: 'History' },
     { id: 'events', label: 'Events' },
     { id: 'controls', label: 'Controls' },
+    { id: 'settings', label: 'Settings' },
   ]
 
   return (
@@ -119,11 +263,33 @@ export default function Device() {
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-semibold text-white font-mono">{device.serial_id}</h1>
+            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-900/60 text-emerald-300 border border-emerald-700/60 font-mono">
+              {device.model_id || 'TM-SUB-01'} ({device.hw_rev || 'HW-1.0'})
+            </span>
             <StatusBadge online={device.is_online} />
           </div>
-          <p className="text-sm text-slate-400 mt-0.5">
-            {device.model_name} · {device.device_type} · fw {pgStr(device.current_fw)}
-          </p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <p className="text-sm text-slate-400">
+              {device.model_name} · {device.device_type} · fw {pgStr(device.current_fw)}
+            </p>
+            {device.capabilities && (
+              <div className="flex flex-wrap gap-1.5 ml-2">
+                <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                  Actuator: {device.capabilities.pump_actuator}
+                </span>
+                {device.capabilities.monitored_tanks && device.capabilities.monitored_tanks.length > 0 && (
+                  <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                    Tanks: {device.capabilities.monitored_tanks.join(', ')}
+                  </span>
+                )}
+                {device.capabilities.has_cyclic_timer && (
+                  <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                    Cyclic Timer
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <button onClick={() => refetch()} className="text-slate-400 hover:text-white">
           <RefreshCw size={16} />
@@ -187,7 +353,10 @@ export default function Device() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <TCard label="Pump" value={PUMP_STATE_LABEL[t.pump_state] ?? String(t.pump_state)}
                 accent={t.pump_state === 2 || t.pump_state === 3 ? 'green' : 'default'} />
-              <TCard label="Tank Level" value={t.tank_level >= 0 ? `${t.tank_level.toFixed(1)}%` : 'No data'} />
+              <TCard label={hasSump ? 'Overhead Tank' : 'Tank Level'} value={t.tank_level >= 0 ? `${t.tank_level.toFixed(1)}%` : 'No data'} />
+              {hasSump && (
+                <TCard label="Sump Tank" value={t.sump_level !== undefined && t.sump_level !== null && t.sump_level >= 0 ? `${t.sump_level.toFixed(1)}%` : 'No data'} />
+              )}
               <TCard label="Voltage" value={`${t.voltage.toFixed(1)} V`} />
               <TCard label="Current" value={`${t.current.toFixed(2)} A`} />
               <TCard label="Power" value={`${t.active_power.toFixed(1)} W`} />
@@ -199,144 +368,13 @@ export default function Device() {
             <p className="text-slate-400 text-sm">No telemetry yet.</p>
           )}
 
-          {/* Tank-Top Sensor Telemetry & Diagnostics */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-              <div className="flex items-center gap-2">
-                <Radio className="text-cyan-400" size={18} />
-                <h3 className="text-xs font-medium text-slate-300 uppercase tracking-wide">
-                  Tank-Top Sensor & LoRa Telemetry
-                </h3>
-                {st && (
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-semibold uppercase ${
-                    st.is_v2 ? 'bg-cyan-900/60 text-cyan-300 border border-cyan-700/60' : 'bg-slate-700 text-slate-300'
-                  }`}>
-                    {st.is_v2 ? 'v2 Fleet Diagnostic (14B)' : 'v1 Legacy (8B)'}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {st ? (
-                  <>
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium flex items-center gap-1.5 ${
-                      st.online ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50' : 'bg-slate-700 text-slate-400'
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${st.online ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                      {st.online ? 'RF Active' : 'RF Offline'}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                      st.magnet_status === 'OK'
-                        ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50'
-                        : st.magnet_status === 'MISSING'
-                        ? 'bg-red-900/60 text-red-200 border border-red-700/60 font-bold'
-                        : 'bg-amber-900/50 text-amber-300 border border-amber-700/50'
-                    }`}>
-                      Magnet: {st.magnet_status}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-xs text-slate-500">No sensor data received</span>
-                )}
-              </div>
-            </div>
+          {/* Overhead Tank Sensor Telemetry & Diagnostics */}
+          <SensorDiagnosticsBox title={hasSump ? 'Overhead Tank Sensor & LoRa Telemetry' : 'Tank Sensor & LoRa Telemetry'} st={st} />
 
-            {st ? (
-              <>
-                {/* Fault or Degraded Alert Banner */}
-                {st.sensor_fault && (
-                  <div className="mb-4 p-3 bg-red-950/70 border border-red-600 rounded-lg flex items-center gap-3 text-red-200 text-xs">
-                    <AlertTriangle className="text-red-400 shrink-0" size={18} />
-                    <div>
-                      <strong className="font-semibold text-white">AS5600 Angle Sensor Communication Fault!</strong>{' '}
-                      Top sensor cannot read magnetic encoder (detached or I2C bus error). Pump automation is safely gated.
-                    </div>
-                  </div>
-                )}
-                {st.magnet_degraded && !st.sensor_fault && (
-                  <div className="mb-4 p-3 bg-amber-950/60 border border-amber-600 rounded-lg flex items-center gap-3 text-amber-200 text-xs">
-                    <AlertTriangle className="text-amber-400 shrink-0" size={18} />
-                    <div>
-                      <strong className="font-semibold text-white">Magnet Alignment Degraded ({st.magnet_status}):</strong>{' '}
-                      Magnetic field strength is outside ideal range. Check mechanical sensor clearance on top of water tank.
-                    </div>
-                  </div>
-                )}
-                {!st.calibrated && (
-                  <div className="mb-4 p-2.5 bg-yellow-950/40 border border-yellow-700/60 rounded-lg flex items-center gap-2 text-yellow-300 text-xs">
-                    <AlertTriangle className="text-yellow-400 shrink-0" size={16} />
-                    <span>Uncalibrated sensor: Full/Empty angles not calibrated in EEPROM. Fallback percent used.</span>
-                  </div>
-                )}
-
-                {/* Metric Cards Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
-                    <p className="text-xs text-slate-400 mb-1">12-bit Angle</p>
-                    <p className="text-lg font-semibold font-mono text-cyan-300">{st.raw_angle ?? 0} <span className="text-xs text-slate-400 font-sans">/ 4095</span></p>
-                    <p className="text-[11px] text-slate-400 mt-1">{(((st.raw_angle ?? 0) / 4095) * 360).toFixed(1)}° rotation</p>
-                  </div>
-                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
-                    <p className="text-xs text-slate-400 mb-1">AGC & Field Gain</p>
-                    <p className="text-lg font-semibold font-mono text-white">{st.agc ?? 0} <span className="text-xs text-slate-400 font-sans">/ 255</span></p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      {(st.agc ?? 0) < 50 ? 'Strong field' : (st.agc ?? 0) > 200 ? 'Weak field' : 'Nominal gain'}
-                    </p>
-                  </div>
-                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
-                    <p className="text-xs text-slate-400 mb-1">Packet Loss Rate</p>
-                    <p className={`text-lg font-semibold font-mono ${
-                      (st.packet_loss_rate_pct ?? 0) > 20 ? 'text-red-400' : (st.packet_loss_rate_pct ?? 0) > 5 ? 'text-amber-400' : 'text-emerald-400'
-                    }`}>
-                      {(st.packet_loss_rate_pct ?? 0).toFixed(1)}%
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1">{st.packet_loss_count ?? 0} dropped · Seq #{st.packet_seq ?? 0}</p>
-                  </div>
-                  <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
-                    <p className="text-xs text-slate-400 mb-1">LoRa RF Link</p>
-                    <p className={`text-lg font-semibold font-mono ${
-                      (st.rf_signal_pct ?? 0) >= 50 ? 'text-emerald-400' : (st.rf_signal_pct ?? 0) >= 25 ? 'text-amber-400' : 'text-red-400'
-                    }`}>
-                      {st.rf_signal_pct ?? 0}%
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1 font-mono">{st.rf_rssi_dbm ?? 0} dBm · SNR {(st.rf_snr_db ?? 0).toFixed(1)} dB</p>
-                  </div>
-                </div>
-
-                {/* Additional Diagnostic Attributes */}
-                <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-xs pt-1 border-t border-slate-700/60">
-                  <div>
-                    <dt className="text-slate-400">Calibration</dt>
-                    <dd className={`font-medium ${st.calibrated ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                      {st.calibrated ? 'Calibrated (EEPROM)' : 'Uncalibrated'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-400">End-Stop Sensor</dt>
-                    <dd className="font-medium text-slate-200">
-                      {st.hall_full ? 'HIGH (Tank Full Activated)' : 'LOW (Inactive)'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-400">AS5600 Status Reg</dt>
-                    <dd className="font-mono text-slate-200">
-                      0x{(st.as5600_status ?? 0).toString(16).toUpperCase().padStart(2, '0')}
-                      <span className="text-[10px] text-slate-400 font-sans ml-1">
-                        (MD: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'})
-                      </span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-400">Telemetry Age</dt>
-                    <dd className="text-slate-200">
-                      {st.online ? 'Live (< 30s)' : 'Stale (> 30s)'}
-                    </dd>
-                  </div>
-                </dl>
-              </>
-            ) : (
-              <p className="text-slate-500 text-xs">No sensor telemetry available for this device yet.</p>
-            )}
-          </div>
+          {/* Sump Tank Sensor Telemetry & Diagnostics */}
+          {hasSump && (
+            <SensorDiagnosticsBox title="Sump Tank Sensor & LoRa Telemetry" st={sumpSt} />
+          )}
 
           {/* Hardware health */}
           {t && (
@@ -627,6 +665,11 @@ export default function Device() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Settings */}
+      {tab === 'settings' && (
+        <SettingsTab device={device} deviceId={deviceId} />
       )}
     </Layout>
   )
@@ -1048,5 +1091,591 @@ function EventCard({ ev }: { ev: any }) {
       )
     }
   }
+}
+
+function SettingsTab({ device, deviceId }: { device: AdminDeviceDetail; deviceId: number }) {
+  const qc = useQueryClient()
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [savingKey, setSavingKey] = useState<string | null>(null)
+
+  const {
+    data: config,
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+  } = useQuery({
+    queryKey: ['admin-device-config', deviceId],
+    queryFn: () => getDeviceConfig(deviceId),
+    staleTime: 60_000,
+    retry: 1,
+  })
+
+  const [form, setForm] = useState<Record<string, number | undefined>>({})
+
+  // Sync form when config loads
+  useEffect(() => {
+    if (config) {
+      setForm({
+        auto_mode: config.auto_mode,
+        tank_height_cm: config.tank_height_cm,
+        tank_low_level_percent: config.tank_low_level_percent,
+        pump_auto_off_time: config.pump_auto_off_time != null ? Math.round(config.pump_auto_off_time / 60) : undefined,
+        sump_height_cm: config.sump_height_cm,
+        sump_low_level_percent: config.sump_low_level_percent,
+        sump_recovery_level_percent: config.sump_recovery_level_percent,
+        cyclic_run_time_min: config.cyclic_run_time_min,
+        cyclic_rest_time_min: config.cyclic_rest_time_min,
+        min_voltage: config.min_voltage,
+        max_voltage: config.max_voltage,
+        min_current: config.min_current,
+        max_current: config.max_current,
+        max_transient_current: config.max_transient_current,
+        transient_blanking_time_s: config.transient_blanking_time_s,
+        voltage_calib: config.voltage_calib,
+        current_calib: config.current_calib,
+        power_calib: config.power_calib,
+      })
+    }
+  }, [config])
+
+  const saveMutation = useMutation({
+    mutationFn: async ({ key, value }: { key: string; value: number }) => {
+      setSavingKey(key)
+      setErrorMsg(null)
+      setSuccessMsg(null)
+      return sendDeviceConfig(deviceId, key, value)
+    },
+    onSuccess: (data, variables) => {
+      qc.setQueryData(['admin-device-config', deviceId], data)
+      setSuccessMsg(`Successfully saved ${variables.key}`)
+      setTimeout(() => setSuccessMsg(null), 4000)
+    },
+    onError: (err: unknown, variables) => {
+      const respErr = (err as { response?: { data?: { message?: string; error?: string } } })?.response?.data
+      const msg = respErr?.message || respErr?.error || (err as Error)?.message || 'Failed to update'
+      setErrorMsg(`Failed to save ${variables.key}: ${msg}`)
+    },
+    onSettled: () => {
+      setSavingKey(null)
+    },
+  })
+
+  const handleSave = (key: string, value: number) => {
+    // For pump_auto_off_time, the user inputs minutes, firmware expects seconds
+    const sendVal = key === 'pump_auto_off_time' ? value * 60 : value
+    saveMutation.mutate({ key, value: sendVal })
+  }
+
+  const hasPowerMeter = device.capabilities?.has_power_meter !== false
+  const hasSump = (config?.sump_height_cm !== undefined && config.sump_height_cm > 0) ||
+    Boolean(device.sensor_telemetry || device.telemetry?.sump_telemetry) ||
+    (device.capabilities?.monitored_tanks?.includes('sump') ?? false)
+  const hasCyclic = Boolean(device.capabilities?.has_cyclic_timer) ||
+    config?.cyclic_run_time_min !== undefined
+
+  return (
+    <div className="space-y-6">
+      {/* Top Banner & Refresh Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-800 p-4 rounded-xl border border-slate-700">
+        <div>
+          <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <Sliders size={18} className="text-blue-400" />
+            Device Configuration & Tunables
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Operational thresholds stored in device NVS flash. Changes sync instantly over MQTT.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5"
+          >
+            <RefreshCw size={13} className={isFetching ? 'animate-spin' : ''} />
+            {isFetching ? 'Fetching from Device…' : 'Fetch from Device'}
+          </button>
+        </div>
+      </div>
+
+      {!device.is_online && (
+        <div className="p-3 bg-amber-950/60 border border-amber-700/60 rounded-xl text-amber-200 text-xs flex items-center gap-2">
+          <AlertCircle size={16} className="text-amber-400 shrink-0" />
+          <span>
+            <strong>Device Offline:</strong> Device must be connected to MQTT broker to fetch or update operational configuration in real-time.
+          </span>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="p-3 bg-emerald-950/80 border border-emerald-600 rounded-xl text-emerald-200 text-xs flex items-center gap-2 animate-fade-in">
+          <Check size={16} className="text-emerald-400 shrink-0" />
+          <span>{successMsg}</span>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="p-3 bg-red-950/80 border border-red-600 rounded-xl text-red-200 text-xs flex items-center gap-2 animate-fade-in">
+          <AlertCircle size={16} className="text-red-400 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="p-8 text-center text-slate-400 text-sm">
+          <RefreshCw size={24} className="animate-spin mx-auto mb-2 text-blue-400" />
+          Querying configuration over MQTT…
+        </div>
+      ) : error ? (
+        <div className="p-6 bg-slate-800 rounded-xl border border-slate-700 text-center">
+          <AlertTriangle size={24} className="mx-auto mb-2 text-amber-400" />
+          <p className="text-sm text-slate-200 font-medium">Failed to retrieve config from device</p>
+          <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+            The device may be offline, rebooting, or did not respond within the 15-second timeout.
+          </p>
+          <button
+            onClick={() => void refetch()}
+            className="mt-4 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-md"
+          >
+            Retry Fetch
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Section 1: Automation & Overhead Tank */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-700 pb-3">
+              <Waves size={18} className="text-cyan-400" />
+              <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                Automation & Overhead Tank Settings
+              </h3>
+            </div>
+
+            {/* Auto Mode Switch */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-900/60 rounded-lg border border-slate-700/60">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-white">Pump Automation Mode</span>
+                  <code className="text-[11px] text-slate-400 font-mono">(auto_mode)</code>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Enable automatic pump start when overhead tank drops below threshold, and auto-stop at full.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSave('auto_mode', form.auto_mode === 1 ? 0 : 1)}
+                  disabled={saveMutation.isPending || !device.is_online}
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase transition-all flex items-center gap-1.5 ${
+                    form.auto_mode === 1
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  }`}
+                >
+                  {savingKey === 'auto_mode' ? (
+                    <RefreshCw size={12} className="animate-spin" />
+                  ) : (
+                    <Power size={12} />
+                  )}
+                  {form.auto_mode === 1 ? 'Auto Enabled' : 'Manual Only'}
+                </button>
+              </div>
+            </div>
+
+            <ConfigRow
+              label="Total Overhead Tank Height"
+              description="Calibrated distance in cm between top sensor and tank floor."
+              configKey="tank_height_cm"
+              value={form.tank_height_cm}
+              unit="cm"
+              min={10}
+              max={2000}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, tank_height_cm: v }))}
+              onSave={() => handleSave('tank_height_cm', form.tank_height_cm!)}
+              isSaving={savingKey === 'tank_height_cm'}
+              disabled={!device.is_online}
+            />
+
+            <ConfigRow
+              label="Tank Low Level Trigger"
+              description="Water level percentage below which auto-mode starts the pump."
+              configKey="tank_low_level_percent"
+              value={form.tank_low_level_percent}
+              unit="%"
+              min={5}
+              max={95}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, tank_low_level_percent: v }))}
+              onSave={() => handleSave('tank_low_level_percent', form.tank_low_level_percent!)}
+              isSaving={savingKey === 'tank_low_level_percent'}
+              disabled={!device.is_online}
+            />
+
+            <ConfigRow
+              label="Pump Safety Auto-Off Timer"
+              description="Maximum allowable continuous pump runtime before safety shutoff (minimum 1 min)."
+              configKey="pump_auto_off_time"
+              value={form.pump_auto_off_time}
+              unit="min"
+              min={1}
+              max={1000}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, pump_auto_off_time: v }))}
+              onSave={() => handleSave('pump_auto_off_time', form.pump_auto_off_time!)}
+              isSaving={savingKey === 'pump_auto_off_time'}
+              disabled={!device.is_online}
+            />
+          </div>
+
+          {/* Section 2: Sump Tank Settings */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              <div className="flex items-center gap-2">
+                <Sliders size={18} className="text-emerald-400" />
+                <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                  Sump Tank Settings
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-700 text-slate-300">
+                {hasSump ? 'Active Sump Sensor' : 'Optional / Standby'}
+              </span>
+            </div>
+
+            <ConfigRow
+              label="Total Sump Depth"
+              description="Physical depth of underground sump tank (set 0 to disable sump monitoring)."
+              configKey="sump_height_cm"
+              value={form.sump_height_cm}
+              unit="cm"
+              min={0}
+              max={2000}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, sump_height_cm: v }))}
+              onSave={() => handleSave('sump_height_cm', form.sump_height_cm!)}
+              isSaving={savingKey === 'sump_height_cm'}
+              disabled={!device.is_online}
+            />
+
+            <ConfigRow
+              label="Sump Low Cutoff Level"
+              description="Sump percentage below which pump immediately trips E9 (Sump Empty)."
+              configKey="sump_low_level_percent"
+              value={form.sump_low_level_percent}
+              unit="%"
+              min={0}
+              max={90}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, sump_low_level_percent: v }))}
+              onSave={() => handleSave('sump_low_level_percent', form.sump_low_level_percent!)}
+              isSaving={savingKey === 'sump_low_level_percent'}
+              disabled={!device.is_online}
+            />
+
+            <ConfigRow
+              label="Sump Recovery Threshold"
+              description="Water level needed to clear E9 fault and resume pumping (must be ≥ Low + 5%)."
+              configKey="sump_recovery_level_percent"
+              value={form.sump_recovery_level_percent}
+              unit="%"
+              min={5}
+              max={100}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, sump_recovery_level_percent: v }))}
+              onSave={() => handleSave('sump_recovery_level_percent', form.sump_recovery_level_percent!)}
+              isSaving={savingKey === 'sump_recovery_level_percent'}
+              disabled={!device.is_online}
+            />
+          </div>
+
+          {/* Section 3: Cyclic / Intermittent Pumping */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              <div className="flex items-center gap-2">
+                <Clock size={18} className="text-purple-400" />
+                <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                  Intermittent Pumping (Cyclic Timer)
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-700 text-slate-300">
+                {hasCyclic ? 'Feature Supported' : 'Optional'}
+              </span>
+            </div>
+
+            <ConfigRow
+              label="Max Continuous Run Time"
+              description="Maximum minutes pump runs before entering intermittent rest cycle (0 = disabled)."
+              configKey="cyclic_run_time_min"
+              value={form.cyclic_run_time_min}
+              unit="min"
+              min={0}
+              max={300}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, cyclic_run_time_min: v }))}
+              onSave={() => handleSave('cyclic_run_time_min', form.cyclic_run_time_min!)}
+              isSaving={savingKey === 'cyclic_run_time_min'}
+              disabled={!device.is_online}
+            />
+
+            <ConfigRow
+              label="Recharging Rest Time"
+              description="Duration in minutes pump stays off to let borewell recharge before auto-resuming."
+              configKey="cyclic_rest_time_min"
+              value={form.cyclic_rest_time_min}
+              unit="min"
+              min={1}
+              max={300}
+              step={1}
+              onChange={(v) => setForm((prev) => ({ ...prev, cyclic_rest_time_min: v }))}
+              onSave={() => handleSave('cyclic_rest_time_min', form.cyclic_rest_time_min!)}
+              isSaving={savingKey === 'cyclic_rest_time_min'}
+              disabled={!device.is_online}
+            />
+          </div>
+
+          {/* Section 4: Electrical Safety Limits */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              <div className="flex items-center gap-2">
+                <Zap size={18} className="text-amber-400" />
+                <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                  Electrical Safety Limits (BL0942)
+                </h3>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                hasPowerMeter ? 'bg-emerald-900/60 text-emerald-300' : 'bg-amber-900/60 text-amber-300'
+              }`}>
+                {hasPowerMeter ? 'Power Meter Present' : 'Meterless (TM-MONO-01)'}
+              </span>
+            </div>
+
+            {!hasPowerMeter ? (
+              <div className="p-3 bg-slate-900/80 border border-slate-700 rounded-lg text-slate-400 text-xs">
+                This device model does not have an on-board electrical sensing IC. Electrical protection cutoffs (E1, E2, E6, E8) are safely bypassed in firmware.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <ConfigRow
+                    label="Min Mains Voltage"
+                    description="Trips E1 (Under-Voltage) below this limit."
+                    configKey="min_voltage"
+                    value={form.min_voltage}
+                    unit="V"
+                    min={100}
+                    max={240}
+                    step={1}
+                    onChange={(v) => setForm((prev) => ({ ...prev, min_voltage: v }))}
+                    onSave={() => handleSave('min_voltage', form.min_voltage!)}
+                    isSaving={savingKey === 'min_voltage'}
+                    disabled={!device.is_online}
+                  />
+
+                  <ConfigRow
+                    label="Max Mains Voltage"
+                    description="Trips E2 (Over-Voltage) above this limit."
+                    configKey="max_voltage"
+                    value={form.max_voltage}
+                    unit="V"
+                    min={220}
+                    max={320}
+                    step={1}
+                    onChange={(v) => setForm((prev) => ({ ...prev, max_voltage: v }))}
+                    onSave={() => handleSave('max_voltage', form.max_voltage!)}
+                    isSaving={savingKey === 'max_voltage'}
+                    disabled={!device.is_online}
+                  />
+
+                  <ConfigRow
+                    label="Dry-Run Current (Min)"
+                    description="Trips E8 (Dry Run) if current drops below this threshold."
+                    configKey="min_current"
+                    value={form.min_current}
+                    unit="A"
+                    min={0.1}
+                    max={50.0}
+                    step={0.1}
+                    onChange={(v) => setForm((prev) => ({ ...prev, min_current: v }))}
+                    onSave={() => handleSave('min_current', form.min_current!)}
+                    isSaving={savingKey === 'min_current'}
+                    disabled={!device.is_online}
+                  />
+
+                  <ConfigRow
+                    label="Overload Current (Max)"
+                    description="Trips E6 (Overload) if current exceeds this limit."
+                    configKey="max_current"
+                    value={form.max_current}
+                    unit="A"
+                    min={1.0}
+                    max={80.0}
+                    step={0.1}
+                    onChange={(v) => setForm((prev) => ({ ...prev, max_current: v }))}
+                    onSave={() => handleSave('max_current', form.max_current!)}
+                    isSaving={savingKey === 'max_current'}
+                    disabled={!device.is_online}
+                  />
+
+                  <ConfigRow
+                    label="Max Inrush Current"
+                    description="Maximum transient surge permitted during starter engagement."
+                    configKey="max_transient_current"
+                    value={form.max_transient_current}
+                    unit="A"
+                    min={5.0}
+                    max={150.0}
+                    step={0.5}
+                    onChange={(v) => setForm((prev) => ({ ...prev, max_transient_current: v }))}
+                    onSave={() => handleSave('max_transient_current', form.max_transient_current!)}
+                    isSaving={savingKey === 'max_transient_current'}
+                    disabled={!device.is_online}
+                  />
+
+                  <ConfigRow
+                    label="Inrush Blanking Window"
+                    description="Grace period in seconds after start before overload trip activates."
+                    configKey="transient_blanking_time_s"
+                    value={form.transient_blanking_time_s}
+                    unit="s"
+                    min={1}
+                    max={10}
+                    step={1}
+                    onChange={(v) => setForm((prev) => ({ ...prev, transient_blanking_time_s: v }))}
+                    onSave={() => handleSave('transient_blanking_time_s', form.transient_blanking_time_s!)}
+                    isSaving={savingKey === 'transient_blanking_time_s'}
+                    disabled={!device.is_online}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Section 5: Hardware & Power Calibration */}
+          <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-700 pb-3">
+              <Gauge size={18} className="text-yellow-400" />
+              <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                Sensor & Power Calibration
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <ConfigRow
+                label="Voltage Calibration"
+                description="AC voltage multiplier."
+                configKey="voltage_calib"
+                value={form.voltage_calib}
+                unit="×"
+                min={0.5}
+                max={2.0}
+                step={0.01}
+                onChange={(v) => setForm((prev) => ({ ...prev, voltage_calib: v }))}
+                onSave={() => handleSave('voltage_calib', form.voltage_calib!)}
+                isSaving={savingKey === 'voltage_calib'}
+                disabled={!device.is_online}
+              />
+
+              <ConfigRow
+                label="Current Calibration"
+                description="AC current multiplier."
+                configKey="current_calib"
+                value={form.current_calib}
+                unit="×"
+                min={0.5}
+                max={2.0}
+                step={0.01}
+                onChange={(v) => setForm((prev) => ({ ...prev, current_calib: v }))}
+                onSave={() => handleSave('current_calib', form.current_calib!)}
+                isSaving={savingKey === 'current_calib'}
+                disabled={!device.is_online}
+              />
+
+              <ConfigRow
+                label="Power Calibration"
+                description="Active power multiplier."
+                configKey="power_calib"
+                value={form.power_calib}
+                unit="×"
+                min={0.5}
+                max={2.0}
+                step={0.01}
+                onChange={(v) => setForm((prev) => ({ ...prev, power_calib: v }))}
+                onSave={() => handleSave('power_calib', form.power_calib!)}
+                isSaving={savingKey === 'power_calib'}
+                disabled={!device.is_online}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConfigRow({
+  label,
+  description,
+  configKey,
+  value,
+  unit,
+  min,
+  max,
+  step = 1,
+  onChange,
+  onSave,
+  isSaving,
+  disabled = false,
+}: {
+  label: string
+  description?: string
+  configKey: string
+  value: number | undefined
+  unit?: string
+  min?: number
+  max?: number
+  step?: number
+  onChange: (val: number) => void
+  onSave: () => void
+  isSaving: boolean
+  disabled?: boolean
+}) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-slate-900/60 rounded-lg border border-slate-700/60">
+      <div className="space-y-0.5 flex-1 pr-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-white">{label}</span>
+          <code className="text-[11px] text-slate-400 font-mono">({configKey})</code>
+        </div>
+        {description && <p className="text-xs text-slate-400">{description}</p>}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="relative flex items-center">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={value ?? ''}
+            disabled={disabled}
+            onChange={(e) => onChange(parseFloat(e.target.value))}
+            className="w-28 px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-md text-white text-sm font-mono focus:border-blue-500 focus:outline-none disabled:opacity-50"
+          />
+          {unit && (
+            <span className="ml-2 text-xs text-slate-400 font-medium w-8">{unit}</span>
+          )}
+        </div>
+        <button
+          onClick={onSave}
+          disabled={disabled || isSaving || value === undefined || isNaN(value)}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1.5"
+        >
+          {isSaving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
+          Save
+        </button>
+      </div>
+    </div>
+  )
 }
 

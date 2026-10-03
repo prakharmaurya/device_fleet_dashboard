@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { AdminDeviceDetail, Device, DeviceEvent, Telemetry } from './types'
+import type { AdminDeviceDetail, Device, DeviceConfigResponse, DeviceEvent, Telemetry } from './types'
 
 export async function listDevices(): Promise<Device[]> {
   const { data } = await api.get<Device[]>('/devices')
@@ -33,3 +33,24 @@ export async function sendCommand(deviceId: number, command: string): Promise<un
 export async function revokeMqttCache(serialId: string): Promise<void> {
   await api.delete(`/devices/${serialId}/mqtt-cache`)
 }
+
+export async function getDeviceConfig(deviceId: number): Promise<DeviceConfigResponse> {
+  const { data } = await api.get<DeviceConfigResponse>('/request/config', {
+    params: { device_id: deviceId },
+  })
+  return data
+}
+
+export async function sendDeviceConfig(
+  deviceId: number,
+  configName: string,
+  value: number
+): Promise<DeviceConfigResponse> {
+  const { data } = await api.post<DeviceConfigResponse>('/request/config', {
+    device_id: deviceId,
+    config_name: configName,
+    value,
+  })
+  return data
+}
+

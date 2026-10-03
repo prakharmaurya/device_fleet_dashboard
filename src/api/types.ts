@@ -26,14 +26,15 @@ export function hwStatusHasFault(hw: HwStatus | null | undefined): boolean {
   return hw.lora !== 'ok' || hw.power_meter !== 'ok' || hw.lcd !== 'ok' || hw.nvs !== 'ok'
 }
 
-// Rich 14-byte v2 fleet diagnostic telemetry from the Tank-Top sensor
+// Rich 14-byte fleet diagnostic telemetry from the Tank-Top sensor
 export interface SensorTelemetry {
   online: boolean
-  is_v2: boolean
+  protocol_version?: number
+  is_v2?: boolean
   raw_angle: number
   agc: number
   as5600_status: number
-  magnet_status: 'OK' | 'MISSING' | 'TOO_WEAK' | 'TOO_STRONG' | 'LEGACY' | 'OFFLINE'
+  magnet_status: 'OK' | 'MISSING' | 'TOO_WEAK' | 'TOO_STRONG' | 'OFFLINE'
   magnet_degraded: boolean
   sensor_fault: boolean
   hall_full: boolean
@@ -56,9 +57,25 @@ export function sensorTelemetryHasWarning(st: SensorTelemetry | null | undefined
   return st.magnet_degraded || st.packet_loss_rate_pct > 20 || st.magnet_status === 'TOO_WEAK' || st.magnet_status === 'TOO_STRONG'
 }
 
+export interface DeviceCapabilities {
+  has_pump: boolean
+  pump_actuator: 'pulse' | 'latch' | 'none' | string
+  has_power_meter: boolean
+  meter_type: 'bl0942' | 'none' | string
+  monitored_tanks: Array<'overhead' | 'sump' | string>
+  has_buzzer: boolean
+  alert_type?: 'piezo' | 'none' | string
+  max_relays?: number
+  has_cyclic_timer?: boolean
+  has_rtc_scheduler?: boolean
+}
+
 export interface Device {
   id: number
   serial_id: string
+  model_id?: string
+  hw_rev?: string
+  capabilities?: DeviceCapabilities | null
   model_name: string
   device_type: string
   is_online: boolean
@@ -66,6 +83,8 @@ export interface Device {
   last_seen_at: string | null
   hw_status?: HwStatus | null
   sensor_telemetry?: SensorTelemetry | null
+  sump_level?: number | null
+  sump_telemetry?: SensorTelemetry | null
   fw?: string
   mac?: string | null
   claimed_at?: string | null
@@ -75,10 +94,13 @@ export interface Device {
 export interface Telemetry {
   id: number
   serial_id: string
+  model_id?: string
+  hw_rev?: string
   ts: string | null
   pump_state: number       // 0=OFF 1=TRANSITION 2=ON 3=FORCE_ON
   pump_runtime: number     // seconds
   tank_level: number       // %
+  sump_level?: number      // %
   voltage: number
   current: number
   active_power: number
@@ -87,6 +109,7 @@ export interface Telemetry {
   fw_version: string
   hw_status?: HwStatus | null
   sensor_telemetry?: SensorTelemetry | null
+  sump_telemetry?: SensorTelemetry | null
   reset_reason: string
   free_heap: number
   min_free_heap: number
@@ -178,6 +201,8 @@ export interface DeviceEvent {
 export interface FirmwareRelease {
   id: number
   device_type: string
+  target_model_id?: string | null
+  min_hw_rev?: string | null
   version: string
   url: string
   release_notes: string
@@ -215,3 +240,26 @@ export const PUMP_STATE_LABEL: Record<number, string> = {
   2: 'ON',
   3: 'FORCE ON',
 }
+
+export interface DeviceConfigResponse {
+  message?: string
+  auto_mode?: number
+  tank_height_cm?: number
+  tank_low_level_percent?: number
+  pump_auto_off_time?: number
+  max_voltage?: number
+  min_voltage?: number
+  max_current?: number
+  min_current?: number
+  max_transient_current?: number
+  transient_blanking_time_s?: number
+  voltage_calib?: number
+  current_calib?: number
+  power_calib?: number
+  sump_height_cm?: number
+  sump_low_level_percent?: number
+  sump_recovery_level_percent?: number
+  cyclic_run_time_min?: number
+  cyclic_rest_time_min?: number
+}
+

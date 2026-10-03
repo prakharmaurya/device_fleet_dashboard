@@ -119,6 +119,8 @@ export default function Firmware() {
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [version, setVersion] = useState('')
+  const [targetModelId, setTargetModelId] = useState('')
+  const [minHwRev, setMinHwRev] = useState('')
   const [url, setUrl] = useState(OTA_PREFIX)
   const [notes, setNotes] = useState('')
   const [formError, setFormError] = useState('')
@@ -129,10 +131,17 @@ export default function Firmware() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => createRelease({ device_type: 'tank', version, url, release_notes: notes }),
+    mutationFn: () => createRelease({
+      device_type: 'tank',
+      version,
+      url,
+      release_notes: notes,
+      target_model_id: targetModelId.trim() || undefined,
+      min_hw_rev: minHwRev.trim() || undefined,
+    }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['firmware-releases'] })
-      setShowForm(false); setVersion(''); setUrl(OTA_PREFIX); setNotes(''); setFormError('')
+      setShowForm(false); setVersion(''); setTargetModelId(''); setMinHwRev(''); setUrl(OTA_PREFIX); setNotes(''); setFormError('')
     },
     onError: (err: unknown) => {
       const msg =
@@ -203,10 +212,20 @@ export default function Firmware() {
           {formError && (
             <p className="text-xs text-red-400 bg-red-900/20 border border-red-800 rounded px-3 py-2">{formError}</p>
           )}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs text-slate-400 mb-1">Version (semver)</label>
               <input required value={version} onChange={(e) => setVersion(e.target.value)} placeholder="0.3.0"
+                className="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Target Model <span className="text-slate-500">(Optional)</span></label>
+              <input value={targetModelId} onChange={(e) => setTargetModelId(e.target.value)} placeholder="e.g. TM-SUB-01"
+                className="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Min HW Rev <span className="text-slate-500">(Optional)</span></label>
+              <input value={minHwRev} onChange={(e) => setMinHwRev(e.target.value)} placeholder="e.g. HW-1.0"
                 className="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500" />
             </div>
             <div>
@@ -239,6 +258,8 @@ export default function Firmware() {
             <thead>
               <tr className="border-b border-slate-700 text-slate-400 text-xs uppercase tracking-wide">
                 <th className="px-4 py-3 text-left">Version</th>
+                <th className="px-4 py-3 text-left">Target Model</th>
+                <th className="px-4 py-3 text-left">Min HW</th>
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-left">Notes</th>
                 <th className="px-4 py-3 text-left">URL</th>
@@ -257,6 +278,8 @@ export default function Firmware() {
               ) : (
                 <tr key={r.id} className="border-b border-slate-700/50">
                   <td className="px-4 py-3 font-mono text-blue-400">{r.version}</td>
+                  <td className="px-4 py-3 font-mono text-emerald-400">{r.target_model_id || 'All'}</td>
+                  <td className="px-4 py-3 font-mono text-slate-300">{r.min_hw_rev || 'Any'}</td>
                   <td className="px-4 py-3 text-slate-400">{r.device_type}</td>
                   <td className="px-4 py-3 text-slate-300">{r.release_notes || '—'}</td>
                   <td className="px-4 py-3 max-w-xs">

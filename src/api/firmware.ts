@@ -13,6 +13,8 @@ export async function createRelease(payload: {
   version: string
   url: string
   release_notes: string
+  target_model_id?: string | null
+  min_hw_rev?: string | null
 }): Promise<FirmwareRelease> {
   const { data } = await api.post<FirmwareRelease>('/firmware/releases', payload)
   return data
