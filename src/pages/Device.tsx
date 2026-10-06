@@ -358,6 +358,16 @@ export default function Device() {
     return null
   })()
 
+  const parsedHw = (() => {
+    const raw = t?.hw_status || device?.hw_status
+    if (!raw) return null
+    if (typeof raw === 'object') return raw as Record<string, any>
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+
   const isFaultActive = (() => {
     if (!events || events.length === 0) return false
     const faultIdx = events.findIndex((e) => e.event_type === 'fault')
@@ -539,17 +549,17 @@ export default function Device() {
             {t && (
               <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
                 <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Hardware Health</h3>
-                {t.hw_status ? (
+                {parsedHw ? (
                   <>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                      <HwCard label="LoRa" status={t.hw_status.lora} />
-                      <HwCard label="Power Meter" status={t.hw_status.power_meter} />
-                      <HwCard label="LCD" status={t.hw_status.lcd} />
-                      <HwCard label="NVS" status={t.hw_status.nvs} />
+                      <HwCard label="LoRa" status={parsedHw.lora} />
+                      <HwCard label="Power Meter" status={parsedHw.power_meter} />
+                      <HwCard label="LCD" status={parsedHw.lcd} />
+                      <HwCard label="NVS" status={parsedHw.nvs} />
                     </div>
                     <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
                       <InfoRow label="Last Reset Reason" value={t.reset_reason || '—'} mono />
-                      <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count)} />
+                      <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count ?? '0')} />
                       <InfoRow label="Free Heap" value={typeof t.free_heap === 'number' ? `${(t.free_heap / 1024).toFixed(1)} KB` : '—'} />
                       <InfoRow label="Min Free Heap" value={typeof t.min_free_heap === 'number' ? `${(t.min_free_heap / 1024).toFixed(1)} KB` : '—'} />
                     </dl>
@@ -1356,6 +1366,7 @@ function SettingsTab({ device, deviceId }: { device: AdminDeviceDetail; deviceId
     queryFn: () => getDeviceConfig(deviceId),
     staleTime: 60_000,
     retry: 1,
+    enabled: Boolean(deviceId && deviceId > 0),
   })
 
   const [form, setForm] = useState<Record<string, number | undefined>>({})
@@ -1414,11 +1425,21 @@ function SettingsTab({ device, deviceId }: { device: AdminDeviceDetail; deviceId
     saveMutation.mutate({ key, value: sendVal })
   }
 
-  const hasPowerMeter = device.capabilities?.has_power_meter !== false
+  const caps = (() => {
+    const raw = device?.capabilities
+    if (!raw) return null
+    if (typeof raw === 'object') return raw
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+
+  const hasPowerMeter = caps?.has_power_meter !== false
   const hasSump = (config?.sump_height_cm !== undefined && config.sump_height_cm > 0) ||
     Boolean(device.sensor_telemetry || device.telemetry?.sump_telemetry) ||
-    (device.capabilities?.monitored_tanks?.includes('sump') ?? false)
-  const hasCyclic = Boolean(device.capabilities?.has_cyclic_timer) ||
+    (Array.isArray(caps?.monitored_tanks) && caps.monitored_tanks.includes('sump'))
+  const hasCyclic = Boolean(caps?.has_cyclic_timer) ||
     config?.cyclic_run_time_min !== undefined
 
   return (
@@ -1903,9 +1924,12 @@ function ConfigRow({
             min={min}
             max={max}
             step={step}
-            value={value ?? ''}
+            value={value !== undefined && !isNaN(value) ? value : ''}
             disabled={disabled}
-            onChange={(e) => onChange(parseFloat(e.target.value))}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value)
+              onChange(isNaN(v) ? (undefined as unknown as number) : v)
+            }}
             className="w-28 px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-md text-white text-sm font-mono focus:border-blue-500 focus:outline-none disabled:opacity-50"
           />
           {unit && (
