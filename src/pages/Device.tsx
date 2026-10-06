@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -24,8 +24,52 @@ import {
 } from '../api/types'
 import StatusBadge from '../components/StatusBadge'
 import Layout from '../components/Layout'
+import ErrorBoundary from '../components/ErrorBoundary'
 
 type Tab = 'overview' | 'history' | 'events' | 'controls' | 'settings'
+
+const HISTORY_PRESETS = [
+  { hours: 6, label: '6h' },
+  { hours: 24, label: '24h' },
+  { hours: 72, label: '3d' },
+  { hours: 168, label: '7d' },
+  { hours: 336, label: '14d' },
+  { hours: 720, label: '30d' },
+] as const
+
+function formatHistoryTime(ts: string | null | undefined, hoursSpan: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ''
+  if (hoursSpan <= 24) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+export function parseEventData(raw: unknown): Record<string, any> {
+  if (!raw) return {}
+  if (typeof raw === 'object' && raw !== null) return raw as Record<string, any>
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    if (!trimmed) return {}
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (typeof parsed === 'object' && parsed !== null) return parsed
+      return { raw: parsed }
+    } catch {
+      try {
+        const decoded = atob(trimmed)
+        const parsed = JSON.parse(decoded)
+        if (typeof parsed === 'object' && parsed !== null) return parsed
+        return { raw: parsed }
+      } catch {
+        return { raw: trimmed }
+      }
+    }
+  }
+  return { raw }
+}
 
 const COMMANDS = ['on', 'off', 'f_on', 'status', 'reboot'] as const
 
@@ -239,7 +283,25 @@ export default function Device() {
     (e) => e.event_type === 'fault' || e.event_type === 'fault_cleared'
   )
   const isFaultActive = latestFaultEvent?.event_type === 'fault'
-  const activeFault = isFaultActive ? (latestFaultEvent?.data as FaultEventData) : null
+  const activeFault = isFaultActive ? (parseEventData(latestFaultEvent?.data) as FaultEventData) : null
+
+  const chartHistory = useMemo(() => {
+    if (!history || history.length === 0) return []
+    // Backend returns ts DESC (newest first). Reverse for chronological left-to-right display:
+    const chronological = [...history].reverse()
+    const maxPoints = 600
+    const step = Math.ceil(chronological.length / maxPoints)
+    const sampled = step > 1 ? chronological.filter((_, idx) => idx % step === 0 || idx === chronological.length - 1) : chronological
+
+    return sampled.map((r) => ({
+      t: formatHistoryTime(r.ts, hours),
+      pump_state: r.pump_state,
+      tank_level: r.tank_level,
+      current: r.current,
+      active_power: r.active_power,
+      voltage: r.voltage,
+    }))
+  }, [history, hours])
 
   const hasSump = (t?.sump_level !== undefined && t?.sump_level !== null && t?.sump_level >= 0) ||
     Boolean(sumpSt) ||
@@ -336,10 +398,10 @@ export default function Device() {
                   </div>
                   {activeFault.readings && (
                     <div className="flex flex-wrap gap-3 text-xs font-mono bg-black/40 px-3 py-1.5 rounded-md border border-red-800/40 w-fit mt-1">
-                      {activeFault.readings.voltage !== undefined && <span>V: {activeFault.readings.voltage.toFixed(1)}V</span>}
-                      {activeFault.readings.current !== undefined && <span>I: {activeFault.readings.current.toFixed(2)}A</span>}
-                      {activeFault.readings.active_power !== undefined && <span>P: {activeFault.readings.active_power.toFixed(1)}W</span>}
-                      {activeFault.readings.tank_level !== undefined && <span>Level: {activeFault.readings.tank_level.toFixed(1)}%</span>}
+                      {typeof activeFault.readings.voltage === 'number' && <span>V: {activeFault.readings.voltage.toFixed(1)}V</span>}
+                      {typeof activeFault.readings.current === 'number' && <span>I: {activeFault.readings.current.toFixed(2)}A</span>}
+                      {typeof activeFault.readings.active_power === 'number' && <span>P: {activeFault.readings.active_power.toFixed(1)}W</span>}
+                      {typeof activeFault.readings.tank_level === 'number' && <span>Level: {activeFault.readings.tank_level.toFixed(1)}%</span>}
                     </div>
                   )}
                 </div>
@@ -418,169 +480,185 @@ export default function Device() {
 
       {/* History */}
       {tab === 'history' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            {[6, 24, 48, 168].map((h) => (
-              <button
-                key={h}
-                onClick={() => setHours(h)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  hours === h ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                {h < 24 ? `${h}h` : `${h / 24}d`}
-              </button>
-            ))}
-          </div>
-
-          {history && history.length > 0 ? (
-            <div className="space-y-4">
-              <ChartCard
-                title="Pump State (0=OFF 2=ON 3=FORCE)"
-                data={history.map((r) => ({ t: new Date(r.ts ?? '').toLocaleTimeString(), v: r.pump_state }))}
-                dataKey="v"
-                color="#a78bfa"
-                stepLine
-                yDomain={[0, 3]}
-              />
-              <ChartCard
-                title="Tank Level (%)"
-                data={history.map((r) => ({ t: new Date(r.ts ?? '').toLocaleTimeString(), v: r.tank_level }))}
-                dataKey="v"
-                color="#60a5fa"
-              />
-              <ChartCard
-                title="Current (A)"
-                data={history.map((r) => ({ t: new Date(r.ts ?? '').toLocaleTimeString(), v: r.current }))}
-                dataKey="v"
-                color="#f472b6"
-              />
-              <ChartCard
-                title="Power (W)"
-                data={history.map((r) => ({ t: new Date(r.ts ?? '').toLocaleTimeString(), v: r.active_power }))}
-                dataKey="v"
-                color="#34d399"
-              />
-              <ChartCard
-                title="Voltage (V)"
-                data={history.map((r) => ({ t: new Date(r.ts ?? '').toLocaleTimeString(), v: r.voltage }))}
-                dataKey="v"
-                color="#fbbf24"
-              />
+        <ErrorBoundary fallbackTitle="Error displaying device history charts">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {HISTORY_PRESETS.map(({ hours: h, label }) => (
+                  <button
+                    key={h}
+                    onClick={() => setHours(h)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      hours === h ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {history && history.length > 0 && (
+                <span className="text-xs text-slate-400">
+                  {history.length.toLocaleString()} records loaded ({hours < 24 ? `${hours}h` : `${hours / 24}d`})
+                </span>
+              )}
             </div>
-          ) : (
-            <p className="text-slate-400 text-sm">No history for this period.</p>
-          )}
-        </div>
+
+            {chartHistory && chartHistory.length > 0 ? (
+              <div className="space-y-4">
+                <ChartCard
+                  title="Pump State (0=OFF 2=ON 3=FORCE)"
+                  data={chartHistory}
+                  dataKey="pump_state"
+                  color="#a78bfa"
+                  stepLine
+                  yDomain={[0, 3]}
+                />
+                <ChartCard
+                  title="Tank Level (%)"
+                  data={chartHistory}
+                  dataKey="tank_level"
+                  color="#60a5fa"
+                />
+                <ChartCard
+                  title="Current (A)"
+                  data={chartHistory}
+                  dataKey="current"
+                  color="#f472b6"
+                />
+                <ChartCard
+                  title="Power (W)"
+                  data={chartHistory}
+                  dataKey="active_power"
+                  color="#34d399"
+                />
+                <ChartCard
+                  title="Voltage (V)"
+                  data={chartHistory}
+                  dataKey="voltage"
+                  color="#fbbf24"
+                />
+              </div>
+            ) : (
+              <p className="text-slate-400 text-sm">No history for this period.</p>
+            )}
+          </div>
+        </ErrorBoundary>
       )}
 
       {/* Events */}
       {tab === 'events' && (
-        <div className="space-y-4">
-          {/* Category Filter Pills and Search */}
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-1.5 bg-slate-900/60 p-1.5 rounded-lg border border-slate-700/60">
-              {[
-                { id: 'all', label: 'All Events' },
-                { id: 'fault', label: '🚨 Faults' },
-                { id: 'command', label: '⚡ Commands' },
-                { id: 'config', label: '⚙️ Config' },
-                { id: 'pump', label: '🔄 Pump' },
-                { id: 'power', label: '🔌 Power & Boot' },
-                { id: 'network', label: '🌐 Connectivity' },
-              ].map(({ id: cid, label }) => (
-                <button
-                  key={cid}
-                  onClick={() => setEventCategory(cid)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                    eventCategory === cid
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            <div className="relative w-full md:w-64">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input
-                type="text"
-                value={eventSearch}
-                onChange={(e) => setEventSearch(e.target.value)}
-                placeholder="Search events, commands, users..."
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Online/offline timeline chart */}
-          {(events ?? []).length > 0 && (() => {
-            const sorted = [...(events ?? [])].reverse()
-            const stepData = sorted
-              .filter((ev) => ev.event_type === 'online' || ev.event_type === 'offline')
-              .map((ev) => ({
-                t: new Date(ev.ts ?? '').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                v: ev.event_type === 'online' ? 1 : 0,
-              }))
-            return stepData.length > 0 ? (
-              <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-                <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Online / Offline Timeline</h4>
-                <ResponsiveContainer width="100%" height={100}>
-                  <LineChart data={stepData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#94a3b8' }} interval="preserveStartEnd" />
-                    <YAxis
-                      domain={[0, 1]} ticks={[0, 1]}
-                      tickFormatter={(v: number) => v === 1 ? 'ON' : 'OFF'}
-                      tick={{ fontSize: 10, fill: '#94a3b8' }} width={36}
-                    />
-                    <Tooltip
-                      contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-                      labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                      formatter={(v) => [Number(v) === 1 ? 'Online' : 'Offline', 'Status']}
-                    />
-                    <Line type="stepAfter" dataKey="v" stroke="#60a5fa" dot={false} strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
+        <ErrorBoundary fallbackTitle="Error loading device events">
+          <div className="space-y-4">
+            {/* Category Filter Pills and Search */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-1.5 bg-slate-900/60 p-1.5 rounded-lg border border-slate-700/60">
+                {[
+                  { id: 'all', label: 'All Events' },
+                  { id: 'fault', label: '🚨 Faults' },
+                  { id: 'command', label: '⚡ Commands' },
+                  { id: 'config', label: '⚙️ Config' },
+                  { id: 'pump', label: '🔄 Pump' },
+                  { id: 'power', label: '🔌 Power & Boot' },
+                  { id: 'network', label: '🌐 Connectivity' },
+                ].map(({ id: cid, label }) => (
+                  <button
+                    key={cid}
+                    onClick={() => setEventCategory(cid)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      eventCategory === cid
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            ) : null
-          })()}
 
-          {/* Structured Audit Events Feed */}
-          <div className="space-y-3">
-            {(() => {
-              const filtered = (events ?? []).filter((ev) => {
-                if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared' && ev.event_type !== 'sensor_fault' && ev.event_type !== 'sensor_fault_cleared' && ev.event_type !== 'magnet_degraded') return false
-                if (eventCategory === 'command' && ev.event_type !== 'command') return false
-                if (eventCategory === 'config' && ev.event_type !== 'config_change') return false
-                if (eventCategory === 'pump' && ev.event_type !== 'pump_state') return false
-                if (eventCategory === 'power' && ev.event_type !== 'power_restored' && ev.event_type !== 'device_reboot') return false
-                if (eventCategory === 'network' && ev.event_type !== 'online' && ev.event_type !== 'offline') return false
+              <div className="relative w-full md:w-64">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={eventSearch}
+                  onChange={(e) => setEventSearch(e.target.value)}
+                  placeholder="Search events, commands, users..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
 
-                if (eventSearch.trim() !== '') {
-                  const q = eventSearch.toLowerCase()
-                  const str = `${ev.event_type} ${JSON.stringify(ev.data ?? '')} ${ev.ts ?? ''}`.toLowerCase()
-                  return str.includes(q)
-                }
-                return true
-              })
-
-              if (filtered.length === 0) {
-                return (
-                  <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center text-slate-500 text-sm">
-                    No matching events found.
+            {/* Online/offline timeline chart */}
+            {(events ?? []).length > 0 && (() => {
+              const sorted = [...(events ?? [])].reverse()
+              const stepData = sorted
+                .filter((ev) => (ev.event_type === 'online' || ev.event_type === 'offline') && ev.ts)
+                .map((ev) => ({
+                  t: new Date(ev.ts!).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                  v: ev.event_type === 'online' ? 1 : 0,
+                }))
+              return stepData.length > 0 ? (
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 min-w-0">
+                  <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Online / Offline Timeline</h4>
+                  <div className="h-28 w-full">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <LineChart data={stepData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#94a3b8' }} interval="preserveStartEnd" />
+                        <YAxis
+                          domain={[0, 1]} ticks={[0, 1]}
+                          tickFormatter={(v: number) => v === 1 ? 'ON' : 'OFF'}
+                          tick={{ fontSize: 10, fill: '#94a3b8' }} width={36}
+                        />
+                        <Tooltip
+                          contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
+                          labelStyle={{ color: '#94a3b8', fontSize: 11 }}
+                          formatter={(v) => [Number(v) === 1 ? 'Online' : 'Offline', 'Status']}
+                        />
+                        <Line type="stepAfter" dataKey="v" stroke="#60a5fa" dot={false} strokeWidth={2} />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
-                )
-              }
-
-              return filtered.map((ev) => (
-                <EventCard key={ev.id} ev={ev} />
-              ))
+                </div>
+              ) : null
             })()}
+
+            {/* Structured Audit Events Feed */}
+            <div className="space-y-3">
+              {(() => {
+                const filtered = (events ?? []).filter((ev) => {
+                  if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared' && ev.event_type !== 'sensor_fault' && ev.event_type !== 'sensor_fault_cleared' && ev.event_type !== 'magnet_degraded') return false
+                  if (eventCategory === 'command' && ev.event_type !== 'command') return false
+                  if (eventCategory === 'config' && ev.event_type !== 'config_change' && ev.event_type !== 'config_sync') return false
+                  if (eventCategory === 'pump' && ev.event_type !== 'pump_state') return false
+                  if (eventCategory === 'power' && ev.event_type !== 'power_restored' && ev.event_type !== 'device_reboot') return false
+                  if (eventCategory === 'network' && ev.event_type !== 'online' && ev.event_type !== 'offline') return false
+
+                  if (eventSearch.trim() !== '') {
+                    const q = eventSearch.toLowerCase()
+                    const parsedData = parseEventData(ev.data)
+                    const str = `${ev.event_type} ${JSON.stringify(parsedData)} ${ev.ts ?? ''}`.toLowerCase()
+                    return str.includes(q)
+                  }
+                  return true
+                })
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center text-slate-500 text-sm">
+                      No matching events found.
+                    </div>
+                  )
+                }
+
+                return filtered.map((ev, idx) => (
+                  <ErrorBoundary key={ev.id ?? `${ev.event_type}-${ev.ts}-${idx}`} fallbackTitle={`Error rendering event #${ev.id ?? idx}`}>
+                    <EventCard ev={ev} />
+                  </ErrorBoundary>
+                ))
+              })()}
+            </div>
           </div>
-        </div>
+        </ErrorBoundary>
       )}
 
       {/* Controls */}
@@ -721,21 +799,23 @@ function ChartCard({ title, data, dataKey, color, stepLine = false, yDomain }: {
   yDomain?: [number, number]
 }) {
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 min-w-0">
       <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">{title}</h4>
-      <ResponsiveContainer width="100%" height={180}>
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-          <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#94a3b8' }} interval="preserveStartEnd" />
-          <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} domain={yDomain} />
-          <Tooltip
-            contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-            labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-            itemStyle={{ color: color }}
-          />
-          <Line type={stepLine ? 'stepAfter' : 'monotone'} dataKey={dataKey} stroke={color} dot={false} strokeWidth={2} />
-        </LineChart>
-      </ResponsiveContainer>
+      <div className="h-48 w-full">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+            <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#94a3b8' }} interval="preserveStartEnd" />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} domain={yDomain} />
+            <Tooltip
+              contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
+              labelStyle={{ color: '#94a3b8', fontSize: 11 }}
+              itemStyle={{ color: color }}
+            />
+            <Line type={stepLine ? 'stepAfter' : 'monotone'} dataKey={dataKey} stroke={color} dot={false} strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }
@@ -757,11 +837,12 @@ function SimulatedLCD({ line1, line2 }: { line1?: string; line2?: string }) {
 
 function EventCard({ ev }: { ev: any }) {
   const t = pgTime(ev.ts)
-  const d = (ev.data || {}) as Record<string, any>
+  const d = parseEventData(ev.data)
 
   switch (ev.event_type) {
     case 'fault': {
       const fault = d as FaultEventData
+      const readings = fault.readings && typeof fault.readings === 'object' ? fault.readings : null
       return (
         <div className="bg-slate-800 rounded-xl border border-red-900/50 border-l-4 border-l-red-500 p-4 shadow-sm transition-all hover:border-red-700/60">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
@@ -775,7 +856,7 @@ function EventCard({ ev }: { ev: any }) {
                   <Clock size={12} /> {t}
                 </span>
               </div>
-              <p className="text-sm text-slate-300">{fault.description}</p>
+              <p className="text-sm text-slate-300">{fault.description || 'Safety protection activated.'}</p>
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 pt-1">
                 {fault.buzzer && (
                   <span className="flex items-center gap-1 text-amber-400">
@@ -788,13 +869,13 @@ function EventCard({ ev }: { ev: any }) {
                   </span>
                 )}
               </div>
-              {fault.readings && (
+              {readings && (
                 <div className="flex flex-wrap gap-2 text-xs font-mono bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/60 w-fit mt-1">
-                  {fault.readings.voltage !== undefined && <span className="text-amber-300">{fault.readings.voltage.toFixed(1)}V</span>}
-                  {fault.readings.current !== undefined && <span className="text-pink-300">{fault.readings.current.toFixed(2)}A</span>}
-                  {fault.readings.active_power !== undefined && <span className="text-emerald-300">{fault.readings.active_power.toFixed(0)}W</span>}
-                  {fault.readings.tank_level !== undefined && <span className="text-blue-300">Tank: {fault.readings.tank_level.toFixed(1)}%</span>}
-                  {fault.readings.runtime_s !== undefined && <span className="text-purple-300">{fault.readings.runtime_s}s</span>}
+                  {typeof readings.voltage === 'number' && <span className="text-amber-300">{readings.voltage.toFixed(1)}V</span>}
+                  {typeof readings.current === 'number' && <span className="text-pink-300">{readings.current.toFixed(2)}A</span>}
+                  {typeof readings.active_power === 'number' && <span className="text-emerald-300">{readings.active_power.toFixed(0)}W</span>}
+                  {typeof readings.tank_level === 'number' && <span className="text-blue-300">Tank: {readings.tank_level.toFixed(1)}%</span>}
+                  {typeof readings.runtime_s === 'number' && <span className="text-purple-300">{readings.runtime_s}s</span>}
                 </div>
               )}
             </div>
@@ -846,10 +927,10 @@ function EventCard({ ev }: { ev: any }) {
               </p>
               <div className="flex flex-wrap gap-2 text-xs font-mono bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700/60 w-fit mt-1">
                 {d.magnet_status && <span className="text-red-300">Magnet: {d.magnet_status}</span>}
-                {d.packet_loss_count !== undefined && <span className="text-amber-300">Drops: {d.packet_loss_count}</span>}
-                {d.raw_angle !== undefined && <span className="text-cyan-300">RawAngle: {d.raw_angle}</span>}
-                {d.agc !== undefined && <span className="text-purple-300">AGC: {d.agc}</span>}
-                {d.protocol_version !== undefined && <span className="text-slate-400">Proto: v{d.protocol_version}</span>}
+                {typeof d.packet_loss_count === 'number' && <span className="text-amber-300">Drops: {d.packet_loss_count}</span>}
+                {typeof d.raw_angle === 'number' && <span className="text-cyan-300">RawAngle: {d.raw_angle}</span>}
+                {typeof d.agc === 'number' && <span className="text-purple-300">AGC: {d.agc}</span>}
+                {typeof d.protocol_version === 'number' && <span className="text-slate-400">Proto: v{d.protocol_version}</span>}
               </div>
             </div>
           </div>
@@ -889,17 +970,17 @@ function EventCard({ ev }: { ev: any }) {
                 <AlertTriangle size={12} /> MAGNET DEGRADED
               </span>
               <span className="text-sm font-medium text-amber-200">
-                {d.description || `Magnet status degraded: ${d.magnet_status}`}
+                {d.description || `Magnet status degraded: ${d.magnet_status || 'UNKNOWN'}`}
               </span>
             </div>
             <span className="text-xs text-slate-400 flex items-center gap-1">
               <Clock size={12} /> {t}
             </span>
           </div>
-          {(d.agc !== undefined || d.raw_angle !== undefined) && (
+          {(typeof d.agc === 'number' || typeof d.raw_angle === 'number' || d.magnet_status) && (
             <div className="mt-2 flex flex-wrap gap-3 text-xs font-mono text-slate-400">
-              {d.agc !== undefined && <span>AGC: {d.agc} / 255</span>}
-              {d.raw_angle !== undefined && <span>Angle: {d.raw_angle} / 4095</span>}
+              {typeof d.agc === 'number' && <span>AGC: {d.agc} / 255</span>}
+              {typeof d.raw_angle === 'number' && <span>Angle: {d.raw_angle} / 4095</span>}
               {d.magnet_status && <span>Status: {d.magnet_status}</span>}
             </div>
           )}
@@ -909,22 +990,25 @@ function EventCard({ ev }: { ev: any }) {
 
     case 'command': {
       const cmd = d as CommandEventData
-      const isSuccess = cmd.status === 'success'
+      const statusRaw = String(cmd.status ?? 'unknown')
+      const isSuccess = statusRaw.toLowerCase() === 'success'
+      const cmdName = String(cmd.command ?? 'UNKNOWN').toUpperCase()
+      const senderText = cmd.sender_email || (cmd.sender_user_id ? `User #${cmd.sender_user_id}` : 'System')
       return (
         <div className="bg-slate-800 rounded-xl border border-purple-900/40 border-l-4 border-l-purple-500 p-3.5 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2 py-0.5 bg-purple-700 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
-                <Terminal size={12} /> {String(cmd.command).toUpperCase()}
+                <Terminal size={12} /> {cmdName}
               </span>
               <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isSuccess ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
-                {cmd.status.toUpperCase()}
+                {statusRaw.toUpperCase()}
               </span>
-              {cmd.execution_ms !== undefined && (
+              {typeof cmd.execution_ms === 'number' && (
                 <span className="text-xs text-slate-400 font-mono">{cmd.execution_ms}ms</span>
               )}
               <span className="text-xs text-slate-400">
-                by <strong className="text-slate-200">{cmd.sender_email || 'User #' + cmd.sender_user_id}</strong>
+                by <strong className="text-slate-200">{senderText}</strong>
                 {cmd.sender_role && <span className="text-slate-500 ml-1">({cmd.sender_role})</span>}
               </span>
             </div>
@@ -934,7 +1018,7 @@ function EventCard({ ev }: { ev: any }) {
           </div>
           {cmd.response !== undefined && cmd.response !== null && (
             <div className="mt-2 text-xs text-slate-400 bg-slate-900/80 p-2 rounded border border-slate-700/60 font-mono overflow-auto max-h-24">
-              {typeof cmd.response === 'string' ? String(cmd.response) : JSON.stringify(cmd.response)}
+              {typeof cmd.response === 'string' ? cmd.response : JSON.stringify(cmd.response, null, 2)}
             </div>
           )}
         </div>
@@ -943,22 +1027,25 @@ function EventCard({ ev }: { ev: any }) {
 
     case 'config_change': {
       const cfg = d as ConfigChangeEventData
-      const isSuccess = cfg.status === 'success'
+      const statusRaw = String(cfg.status ?? 'unknown')
+      const isSuccess = statusRaw.toLowerCase() === 'success'
+      const cfgName = String(cfg.config_name ?? 'unknown')
+      const senderText = cfg.sender_email || (cfg.sender_user_id ? `User #${cfg.sender_user_id}` : 'System')
       return (
         <div className="bg-slate-800 rounded-xl border border-amber-900/40 border-l-4 border-l-amber-500 p-3.5 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2 py-0.5 bg-amber-700 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
-                <Settings size={12} /> {cfg.config_name}
+                <Settings size={12} /> {cfgName}
               </span>
               <span className="text-xs text-amber-200 font-semibold">
-                Set to: <span className="font-mono">{cfg.value}</span>
+                Set to: <span className="font-mono">{cfg.value ?? '—'}</span>
               </span>
               <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${isSuccess ? 'bg-green-950 text-green-400 border border-green-800' : 'bg-red-950 text-red-400 border border-red-800'}`}>
-                {cfg.status.toUpperCase()}
+                {statusRaw.toUpperCase()}
               </span>
               <span className="text-xs text-slate-400">
-                by <strong className="text-slate-200">{cfg.sender_email || 'User #' + cfg.sender_user_id}</strong>
+                by <strong className="text-slate-200">{senderText}</strong>
               </span>
             </div>
             <span className="text-xs text-slate-400 flex items-center gap-1">
@@ -972,6 +1059,8 @@ function EventCard({ ev }: { ev: any }) {
     case 'pump_state': {
       const p = d as PumpStateEventData
       const isRunning = p.to_state === 2 || p.to_state === 3
+      const stateLabel = p.state_label || (isRunning ? 'PUMP STARTED' : 'PUMP STOPPED')
+      const trigger = p.trigger_source || 'unknown'
       return (
         <div className={`bg-slate-800 rounded-xl border p-3.5 shadow-sm ${
           isRunning
@@ -984,12 +1073,12 @@ function EventCard({ ev }: { ev: any }) {
                 isRunning ? 'bg-emerald-600' : 'bg-slate-600'
               }`}>
                 {isRunning ? <Play size={11} /> : <Square size={11} />}
-                {p.state_label || (isRunning ? 'PUMP STARTED' : 'PUMP STOPPED')}
+                {stateLabel}
               </span>
               <span className="text-xs text-slate-300">
-                Trigger: <strong className="text-white font-mono">{p.trigger_source}</strong>
+                Trigger: <strong className="text-white font-mono">{trigger}</strong>
               </span>
-              {!isRunning && p.runtime_s !== undefined && (
+              {!isRunning && typeof p.runtime_s === 'number' && (
                 <span className="text-xs text-slate-400">
                   Ran for: <strong className="text-slate-200">{Math.floor(p.runtime_s / 60)}m {p.runtime_s % 60}s</strong>
                 </span>
@@ -1004,11 +1093,12 @@ function EventCard({ ev }: { ev: any }) {
               <Clock size={12} /> {t}
             </span>
           </div>
-          {(p.voltage !== undefined || p.current !== undefined || p.tank_level !== undefined) && (
+          {(typeof p.voltage === 'number' || typeof p.current === 'number' || typeof p.tank_level === 'number' || typeof p.active_power === 'number') && (
             <div className="flex flex-wrap gap-3 text-xs font-mono text-slate-400 mt-2 bg-slate-900/60 px-2.5 py-1 rounded w-fit">
-              {p.voltage !== undefined && <span>{p.voltage.toFixed(1)}V</span>}
-              {p.current !== undefined && <span>{p.current.toFixed(2)}A</span>}
-              {p.tank_level !== undefined && <span>Tank: {p.tank_level.toFixed(1)}%</span>}
+              {typeof p.voltage === 'number' && <span>{p.voltage.toFixed(1)}V</span>}
+              {typeof p.current === 'number' && <span>{p.current.toFixed(2)}A</span>}
+              {typeof p.active_power === 'number' && <span>{p.active_power.toFixed(0)}W</span>}
+              {typeof p.tank_level === 'number' && <span>Tank: {p.tank_level.toFixed(1)}%</span>}
             </div>
           )}
         </div>
@@ -1029,18 +1119,18 @@ function EventCard({ ev }: { ev: any }) {
               <span className="text-sm font-semibold text-yellow-200 font-mono">
                 {pow.reset_reason || 'RESET'}
               </span>
-              <span className="text-xs text-slate-300">{pow.explanation}</span>
+              {pow.explanation && <span className="text-xs text-slate-300">{pow.explanation}</span>}
             </div>
             <span className="text-xs text-slate-400 flex items-center gap-1">
               <Clock size={12} /> {t}
             </span>
           </div>
-          {(pow.fw_version || pow.ip_address || pow.network_ssid) && (
+          {(pow.fw_version || pow.ip_address || pow.network_ssid || typeof pow.free_heap === 'number') && (
             <div className="flex flex-wrap gap-3 text-xs text-slate-400 font-mono mt-1.5">
               {pow.fw_version && <span>FW: {pow.fw_version}</span>}
               {pow.ip_address && <span>IP: {pow.ip_address}</span>}
               {pow.network_ssid && <span>SSID: {pow.network_ssid}</span>}
-              {pow.free_heap && <span>Heap: {Math.round(pow.free_heap / 1024)}KB</span>}
+              {typeof pow.free_heap === 'number' && <span>Heap: {Math.round(pow.free_heap / 1024)}KB</span>}
             </div>
           )}
         </div>
@@ -1075,6 +1165,49 @@ function EventCard({ ev }: { ev: any }) {
       )
     }
 
+    case 'config_sync': {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-blue-900/40 border-l-4 border-l-blue-500 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-blue-600 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
+                <Settings size={11} /> CONFIG SYNC
+              </span>
+              <span className="text-xs text-slate-300">Device synchronized operational configuration with cloud</span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+          {Object.keys(d).length > 0 && (
+            <pre className="mt-2 text-xs text-slate-400 font-mono overflow-auto max-h-24 bg-slate-900/80 p-2 rounded border border-slate-700/60">
+              {JSON.stringify(d, null, 2)}
+            </pre>
+          )}
+        </div>
+      )
+    }
+
+    case 'ota_progress': {
+      return (
+        <div className="bg-slate-800 rounded-xl border border-indigo-900/40 border-l-4 border-l-indigo-500 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-indigo-600 text-white font-mono font-bold rounded text-xs flex items-center gap-1">
+                <RefreshCw size={11} /> OTA PROGRESS
+              </span>
+              <span className="text-xs text-slate-300 font-mono">
+                {typeof d === 'string' ? d : JSON.stringify(d)}
+              </span>
+            </div>
+            <span className="text-xs text-slate-400 flex items-center gap-1">
+              <Clock size={12} /> {t}
+            </span>
+          </div>
+        </div>
+      )
+    }
+
     default: {
       return (
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-3 shadow-sm">
@@ -1082,9 +1215,9 @@ function EventCard({ ev }: { ev: any }) {
             <span className="font-mono text-xs text-slate-300 font-bold">{ev.event_type}</span>
             <span className="text-xs text-slate-400">{t}</span>
           </div>
-          {ev.data && (
-            <pre className="mt-1 text-xs text-slate-400 font-mono overflow-auto max-h-20 bg-slate-900 p-2 rounded">
-              {JSON.stringify(ev.data, null, 2)}
+          {Object.keys(d).length > 0 && (
+            <pre className="mt-1 text-xs text-slate-400 font-mono overflow-auto max-h-24 bg-slate-900 p-2 rounded">
+              {JSON.stringify(d, null, 2)}
             </pre>
           )}
         </div>
