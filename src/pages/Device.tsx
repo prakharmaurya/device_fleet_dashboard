@@ -279,10 +279,28 @@ export default function Device() {
   })
 
   const revokeMutation = useMutation({
-    mutationFn: () => revokeMqttCache(device!.serial_id),
+    mutationFn: () => revokeMqttCache(device?.serial_id ?? ''),
     onSuccess: () => setCmdResult('MQTT cache revoked'),
     onError: () => setCmdResult('Revoke failed'),
   })
+
+  const chartHistory = useMemo(() => {
+    if (!history || history.length === 0) return []
+    // Backend returns ts DESC (newest first). Reverse for chronological left-to-right display:
+    const chronological = [...history].reverse()
+    const maxPoints = 600
+    const step = Math.ceil(chronological.length / maxPoints)
+    const sampled = step > 1 ? chronological.filter((_, idx) => idx % step === 0 || idx === chronological.length - 1) : chronological
+
+    return sampled.map((r) => ({
+      t: formatHistoryTime(r.ts, hours),
+      pump_state: r.pump_state,
+      tank_level: r.tank_level,
+      current: r.current,
+      active_power: r.active_power,
+      voltage: r.voltage,
+    }))
+  }, [history, hours])
 
   if (isLoading) {
     return (
@@ -389,24 +407,6 @@ export default function Device() {
     const ev = events.find((e) => e.event_type === 'fault')
     return ev ? (parseEventData(ev.data) as FaultEventData) : null
   })()
-
-  const chartHistory = useMemo(() => {
-    if (!history || history.length === 0) return []
-    // Backend returns ts DESC (newest first). Reverse for chronological left-to-right display:
-    const chronological = [...history].reverse()
-    const maxPoints = 600
-    const step = Math.ceil(chronological.length / maxPoints)
-    const sampled = step > 1 ? chronological.filter((_, idx) => idx % step === 0 || idx === chronological.length - 1) : chronological
-
-    return sampled.map((r) => ({
-      t: formatHistoryTime(r.ts, hours),
-      pump_state: r.pump_state,
-      tank_level: r.tank_level,
-      current: r.current,
-      active_power: r.active_power,
-      voltage: r.voltage,
-    }))
-  }, [history, hours])
 
   const hasSump = (typeof t?.sump_level === 'number' && t.sump_level >= 0) ||
     Boolean(sumpSt) ||
