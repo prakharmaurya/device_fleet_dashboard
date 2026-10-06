@@ -383,11 +383,11 @@ export default function Device() {
                 <div className="space-y-1.5 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="px-2 py-0.5 bg-red-600 text-white font-bold rounded text-xs animate-pulse flex items-center gap-1">
-                      <ShieldAlert size={13} /> ACTIVE FAULT: {activeFault.code}
+                      <ShieldAlert size={13} /> ACTIVE FAULT: {activeFault.code || 'ALERT'}
                     </span>
-                    <span className="font-semibold text-red-200 text-base">{activeFault.name}</span>
+                    <span className="font-semibold text-red-200 text-base">{activeFault.name || 'Safety Protection Trip'}</span>
                   </div>
-                  <p className="text-sm text-red-300">{activeFault.description}</p>
+                  <p className="text-sm text-red-300">{activeFault.description || 'Safety protection active.'}</p>
                   <div className="flex flex-wrap items-center gap-4 text-xs text-red-300/90 pt-1">
                     <span className="flex items-center gap-1 text-red-400 font-medium">
                       <Volume2 size={13} /> Alarm Pattern: <strong className="text-red-200">{activeFault.buzzer}</strong>
@@ -419,12 +419,12 @@ export default function Device() {
               {hasSump && (
                 <TCard label="Sump Tank" value={t.sump_level !== undefined && t.sump_level !== null && t.sump_level >= 0 ? `${t.sump_level.toFixed(1)}%` : 'No data'} />
               )}
-              <TCard label="Voltage" value={`${t.voltage.toFixed(1)} V`} />
-              <TCard label="Current" value={`${t.current.toFixed(2)} A`} />
-              <TCard label="Power" value={`${t.active_power.toFixed(1)} W`} />
-              <TCard label="Frequency" value={`${t.frequency.toFixed(1)} Hz`} />
-              <TCard label="WiFi RSSI" value={`${t.wifi_rssi} dBm`} />
-              <TCard label="Runtime" value={`${Math.floor(t.pump_runtime / 60)}m ${t.pump_runtime % 60}s`} />
+              <TCard label="Voltage" value={typeof t.voltage === 'number' ? `${t.voltage.toFixed(1)} V` : '—'} />
+              <TCard label="Current" value={typeof t.current === 'number' ? `${t.current.toFixed(2)} A` : '—'} />
+              <TCard label="Power" value={typeof t.active_power === 'number' ? `${t.active_power.toFixed(1)} W` : '—'} />
+              <TCard label="Frequency" value={typeof t.frequency === 'number' ? `${t.frequency.toFixed(1)} Hz` : '—'} />
+              <TCard label="WiFi RSSI" value={typeof t.wifi_rssi === 'number' ? `${t.wifi_rssi} dBm` : '—'} />
+              <TCard label="Runtime" value={typeof t.pump_runtime === 'number' ? `${Math.floor(t.pump_runtime / 60)}m ${t.pump_runtime % 60}s` : '—'} />
             </div>
           ) : (
             <p className="text-slate-400 text-sm">No telemetry yet.</p>
@@ -453,8 +453,8 @@ export default function Device() {
                   <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
                     <InfoRow label="Last Reset Reason" value={t.reset_reason || '—'} mono />
                     <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count)} />
-                    <InfoRow label="Free Heap" value={`${(t.free_heap / 1024).toFixed(1)} KB`} />
-                    <InfoRow label="Min Free Heap" value={`${(t.min_free_heap / 1024).toFixed(1)} KB`} />
+                    <InfoRow label="Free Heap" value={typeof t.free_heap === 'number' ? `${(t.free_heap / 1024).toFixed(1)} KB` : '—'} />
+                    <InfoRow label="Min Free Heap" value={typeof t.min_free_heap === 'number' ? `${(t.min_free_heap / 1024).toFixed(1)} KB` : '—'} />
                   </dl>
                 </>
               ) : (
@@ -590,12 +590,17 @@ export default function Device() {
             {/* Online/offline timeline chart */}
             {(events ?? []).length > 0 && (() => {
               const sorted = [...(events ?? [])].reverse()
-              const stepData = sorted
+              const rawStepData = sorted
                 .filter((ev) => (ev.event_type === 'online' || ev.event_type === 'offline') && ev.ts)
-                .map((ev) => ({
-                  t: new Date(ev.ts!).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                  v: ev.event_type === 'online' ? 1 : 0,
-                }))
+                .map((ev) => {
+                  const dt = new Date(ev.ts!)
+                  return {
+                    t: isNaN(dt.getTime()) ? '—' : dt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    v: ev.event_type === 'online' ? 1 : 0,
+                  }
+                })
+              const step = Math.ceil(rawStepData.length / 200)
+              const stepData = step > 1 ? rawStepData.filter((_, idx) => idx % step === 0 || idx === rawStepData.length - 1) : rawStepData
               return stepData.length > 0 ? (
                 <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 min-w-0">
                   <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Online / Offline Timeline</h4>
@@ -836,6 +841,7 @@ function SimulatedLCD({ line1, line2 }: { line1?: string; line2?: string }) {
 }
 
 function EventCard({ ev }: { ev: any }) {
+  if (!ev) return null
   const t = pgTime(ev.ts)
   const d = parseEventData(ev.data)
 

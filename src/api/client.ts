@@ -28,5 +28,6 @@ export function pgStr(v: string | null | undefined): string {
 
 export function pgTime(v: string | null | undefined): string {
   if (!v) return '—'
-  return new Date(v).toLocaleString()
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
