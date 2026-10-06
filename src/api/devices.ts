@@ -6,19 +6,19 @@ export async function listDevices(): Promise<Device[]> {
   return data
 }
 
-export async function getAdminDevice(id: number): Promise<AdminDeviceDetail> {
+export async function getAdminDevice(id: number | string): Promise<AdminDeviceDetail> {
   const { data } = await api.get<AdminDeviceDetail>(`/admin/devices/${id}`)
   return data
 }
 
-export async function getAdminDeviceHistory(id: number, hours = 24): Promise<Telemetry[]> {
+export async function getAdminDeviceHistory(id: number | string, hours = 24): Promise<Telemetry[]> {
   const { data } = await api.get<{ rows: Telemetry[] }>(`/admin/devices/${id}/history`, {
     params: { hours },
   })
   return data.rows ?? []
 }
 
-export async function getAdminDeviceEvents(id: number, limit = 100): Promise<DeviceEvent[]> {
+export async function getAdminDeviceEvents(id: number | string, limit = 100): Promise<DeviceEvent[]> {
   const { data } = await api.get<{ events: DeviceEvent[] }>(`/admin/devices/${id}/events`, {
     params: { limit },
   })

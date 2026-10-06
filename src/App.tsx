@@ -5,6 +5,7 @@ import Fleet from './pages/Fleet'
 import Device from './pages/Device'
 import Firmware from './pages/Firmware'
 import Users from './pages/Users'
+import ErrorBoundary from './components/ErrorBoundary'
 import type { ReactNode } from 'react'
 
 function Guard({ children }: { children: ReactNode }) {
@@ -18,14 +19,25 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/fleet" element={<Guard><Fleet /></Guard>} />
-          <Route path="/devices/:id" element={<Guard><Device /></Guard>} />
-          <Route path="/firmware" element={<Guard><Firmware /></Guard>} />
-          <Route path="/users" element={<Guard><Users /></Guard>} />
-          <Route path="*" element={<Navigate to="/fleet" replace />} />
-        </Routes>
+        <ErrorBoundary fallbackTitle="An unexpected application error occurred">
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/fleet" element={<Guard><Fleet /></Guard>} />
+            <Route
+              path="/devices/:id"
+              element={
+                <Guard>
+                  <ErrorBoundary fallbackTitle="Error loading device details">
+                    <Device />
+                  </ErrorBoundary>
+                </Guard>
+              }
+            />
+            <Route path="/firmware" element={<Guard><Firmware /></Guard>} />
+            <Route path="/users" element={<Guard><Users /></Guard>} />
+            <Route path="*" element={<Navigate to="/fleet" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   )

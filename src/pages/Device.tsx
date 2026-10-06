@@ -17,7 +17,7 @@ import {
 import { listReleases, pushOTA } from '../api/firmware'
 import { pgStr, pgTime } from '../api/client'
 import {
-  PUMP_STATE_LABEL, type HwStatus, type SensorTelemetry, type FaultEventData,
+  PUMP_STATE_LABEL, type SensorTelemetry, type FaultEventData,
   type FaultClearedEventData, type CommandEventData,
   type ConfigChangeEventData, type PumpStateEventData,
   type PowerEventData, type AdminDeviceDetail
@@ -74,6 +74,13 @@ export function parseEventData(raw: unknown): Record<string, any> {
 const COMMANDS = ['on', 'off', 'f_on', 'status', 'reboot'] as const
 
 function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetry | null | undefined }) {
+  const rawAngle = typeof st?.raw_angle === 'number' ? st.raw_angle : 0
+  const agc = typeof st?.agc === 'number' ? st.agc : 0
+  const lossPct = typeof st?.packet_loss_rate_pct === 'number' ? st.packet_loss_rate_pct : 0
+  const rfSig = typeof st?.rf_signal_pct === 'number' ? st.rf_signal_pct : 0
+  const rfSnr = typeof st?.rf_snr_db === 'number' ? st.rf_snr_db : 0
+  const as5600 = typeof st?.as5600_status === 'number' ? st.as5600_status : 0
+
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
@@ -104,7 +111,7 @@ function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetr
                   ? 'bg-red-900/60 text-red-200 border border-red-700/60 font-bold'
                   : 'bg-amber-900/50 text-amber-300 border border-amber-700/50'
               }`}>
-                Magnet: {st.magnet_status}
+                Magnet: {String(st.magnet_status ?? 'OFFLINE')}
               </span>
             </>
           ) : (
@@ -128,7 +135,7 @@ function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetr
             <div className="mb-4 p-3 bg-amber-950/60 border border-amber-600 rounded-lg flex items-center gap-3 text-amber-200 text-xs">
               <AlertTriangle className="text-amber-400 shrink-0" size={18} />
               <div>
-                <strong className="font-semibold text-white">Magnet Alignment Degraded ({st.magnet_status}):</strong>{' '}
+                <strong className="font-semibold text-white">Magnet Alignment Degraded ({String(st.magnet_status)}):</strong>{' '}
                 Magnetic field strength is outside ideal range. Check mechanical sensor clearance on top of water tank.
               </div>
             </div>
@@ -143,33 +150,33 @@ function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetr
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
               <p className="text-xs text-slate-400 mb-1">12-bit Angle</p>
-              <p className="text-lg font-semibold font-mono text-cyan-300">{st.raw_angle ?? 0} <span className="text-xs text-slate-400 font-sans">/ 4095</span></p>
-              <p className="text-[11px] text-slate-400 mt-1">{(((st.raw_angle ?? 0) / 4095) * 360).toFixed(1)}° rotation</p>
+              <p className="text-lg font-semibold font-mono text-cyan-300">{rawAngle} <span className="text-xs text-slate-400 font-sans">/ 4095</span></p>
+              <p className="text-[11px] text-slate-400 mt-1">{((rawAngle / 4095) * 360).toFixed(1)}° rotation</p>
             </div>
             <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
               <p className="text-xs text-slate-400 mb-1">AGC & Field Gain</p>
-              <p className="text-lg font-semibold font-mono text-white">{st.agc ?? 0} <span className="text-xs text-slate-400 font-sans">/ 255</span></p>
+              <p className="text-lg font-semibold font-mono text-white">{agc} <span className="text-xs text-slate-400 font-sans">/ 255</span></p>
               <p className="text-[11px] text-slate-400 mt-1">
-                {(st.agc ?? 0) < 50 ? 'Strong field' : (st.agc ?? 0) > 200 ? 'Weak field' : 'Nominal gain'}
+                {agc < 50 ? 'Strong field' : agc > 200 ? 'Weak field' : 'Nominal gain'}
               </p>
             </div>
             <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
               <p className="text-xs text-slate-400 mb-1">Packet Loss Rate</p>
               <p className={`text-lg font-semibold font-mono ${
-                (st.packet_loss_rate_pct ?? 0) > 20 ? 'text-red-400' : (st.packet_loss_rate_pct ?? 0) > 5 ? 'text-amber-400' : 'text-emerald-400'
+                lossPct > 20 ? 'text-red-400' : lossPct > 5 ? 'text-amber-400' : 'text-emerald-400'
               }`}>
-                {(st.packet_loss_rate_pct ?? 0).toFixed(1)}%
+                {lossPct.toFixed(1)}%
               </p>
               <p className="text-[11px] text-slate-400 mt-1">{st.packet_loss_count ?? 0} dropped · Seq #{st.packet_seq ?? 0}</p>
             </div>
             <div className="bg-slate-900/80 rounded-lg border border-slate-700/70 p-3">
               <p className="text-xs text-slate-400 mb-1">LoRa RF Link</p>
               <p className={`text-lg font-semibold font-mono ${
-                (st.rf_signal_pct ?? 0) >= 50 ? 'text-emerald-400' : (st.rf_signal_pct ?? 0) >= 25 ? 'text-amber-400' : 'text-red-400'
+                rfSig >= 50 ? 'text-emerald-400' : rfSig >= 25 ? 'text-amber-400' : 'text-red-400'
               }`}>
-                {st.rf_signal_pct ?? 0}%
+                {rfSig}%
               </p>
-              <p className="text-[11px] text-slate-400 mt-1 font-mono">{st.rf_rssi_dbm ?? 0} dBm · SNR {(st.rf_snr_db ?? 0).toFixed(1)} dB</p>
+              <p className="text-[11px] text-slate-400 mt-1 font-mono">{st.rf_rssi_dbm ?? 0} dBm · SNR {rfSnr.toFixed(1)} dB</p>
             </div>
           </div>
 
@@ -189,9 +196,9 @@ function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetr
             <div>
               <dt className="text-slate-400">AS5600 Status Reg</dt>
               <dd className="font-mono text-slate-200">
-                0x{(st.as5600_status ?? 0).toString(16).toUpperCase().padStart(2, '0')}
+                0x{as5600.toString(16).toUpperCase().padStart(2, '0')}
                 <span className="text-[10px] text-slate-400 font-sans ml-1">
-                  (MD: {(st.as5600_status ?? 0) & 0x20 ? '1' : '0'} ML: {(st.as5600_status ?? 0) & 0x10 ? '1' : '0'} MH: {(st.as5600_status ?? 0) & 0x08 ? '1' : '0'})
+                  (MD: {as5600 & 0x20 ? '1' : '0'} ML: {as5600 & 0x10 ? '1' : '0'} MH: {as5600 & 0x08 ? '1' : '0'})
                 </span>
               </dd>
             </div>
@@ -212,7 +219,7 @@ function SensorDiagnosticsBox({ title, st }: { title: string; st: SensorTelemetr
 
 export default function Device() {
   const { id } = useParams<{ id: string }>()
-  const deviceId = Number(id)
+  const deviceKey = id?.trim() || ''
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('overview')
@@ -223,20 +230,24 @@ export default function Device() {
   const [eventSearch, setEventSearch] = useState<string>('')
 
   const { data: device, isLoading, isError, refetch } = useQuery({
-    queryKey: ['admin-device', deviceId],
-    queryFn: () => getAdminDevice(deviceId),
+    queryKey: ['admin-device', deviceKey],
+    queryFn: () => getAdminDevice(deviceKey),
+    enabled: Boolean(deviceKey),
     refetchInterval: 30_000,
   })
 
+  const resolvedDeviceId = device?.id ?? (!isNaN(Number(deviceKey)) ? Number(deviceKey) : 0)
+
   const { data: history } = useQuery({
-    queryKey: ['admin-device-history', deviceId, hours],
-    queryFn: () => getAdminDeviceHistory(deviceId, hours),
-    enabled: tab === 'history',
+    queryKey: ['admin-device-history', resolvedDeviceId, hours],
+    queryFn: () => getAdminDeviceHistory(resolvedDeviceId, hours),
+    enabled: tab === 'history' && resolvedDeviceId > 0,
   })
 
   const { data: events } = useQuery({
-    queryKey: ['admin-device-events', deviceId],
-    queryFn: () => getAdminDeviceEvents(deviceId),
+    queryKey: ['admin-device-events', resolvedDeviceId],
+    queryFn: () => getAdminDeviceEvents(resolvedDeviceId),
+    enabled: resolvedDeviceId > 0,
     refetchInterval: 15_000,
   })
 
@@ -247,16 +258,16 @@ export default function Device() {
   })
 
   const cmdMutation = useMutation({
-    mutationFn: (command: string) => sendCommand(deviceId, command),
+    mutationFn: (command: string) => sendCommand(resolvedDeviceId, command),
     onSuccess: (data) => {
       setCmdResult(JSON.stringify(data, null, 2))
-      void qc.invalidateQueries({ queryKey: ['admin-device', deviceId] })
+      void qc.invalidateQueries({ queryKey: ['admin-device', deviceKey] })
     },
     onError: () => setCmdResult('Command failed'),
   })
 
   const otaMutation = useMutation({
-    mutationFn: (url: string) => pushOTA(deviceId, url),
+    mutationFn: (url: string) => pushOTA(resolvedDeviceId, url),
     onSuccess: () => setCmdResult('OTA pushed successfully'),
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { message?: string; error?: string } } })
@@ -273,17 +284,96 @@ export default function Device() {
     onError: () => setCmdResult('Revoke failed'),
   })
 
-  if (isLoading) return <Layout><div className="text-slate-400 text-sm">Loading…</div></Layout>
-  if (isError || !device) return <Layout><div className="text-red-400 text-sm">Device not found.</div></Layout>
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => navigate('/fleet')} className="text-slate-400 hover:text-white transition-colors">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold text-white font-mono">Loading device…</h1>
+          </div>
+        </div>
+        <div className="bg-slate-800 rounded-xl border border-slate-700 p-8 text-center text-slate-400 text-sm flex items-center justify-center gap-2">
+          <RefreshCw size={16} className="animate-spin text-blue-400" />
+          <span>Fetching device telemetry and status…</span>
+        </div>
+      </Layout>
+    )
+  }
+
+  if (isError || !device) {
+    return (
+      <Layout>
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => navigate('/fleet')} className="text-slate-400 hover:text-white transition-colors">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold text-white font-mono">Device Not Found</h1>
+          </div>
+        </div>
+        <div className="bg-slate-800 rounded-xl border border-red-900/40 p-6 text-center space-y-3">
+          <p className="text-red-400 text-sm">Device #{deviceKey} could not be found or loaded.</p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-md text-xs font-medium transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </Layout>
+    )
+  }
 
   const t = device.telemetry
-  const st = t?.sensor_telemetry || device?.sensor_telemetry
-  const sumpSt = t?.sump_telemetry || device?.sump_telemetry
-  const latestFaultEvent = (events ?? []).find(
-    (e) => e.event_type === 'fault' || e.event_type === 'fault_cleared'
-  )
-  const isFaultActive = latestFaultEvent?.event_type === 'fault'
-  const activeFault = isFaultActive ? (parseEventData(latestFaultEvent?.data) as FaultEventData) : null
+  const st = (() => {
+    const raw = t?.sensor_telemetry || device?.sensor_telemetry
+    if (!raw) return null
+    if (typeof raw === 'object') return raw as SensorTelemetry
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+
+  const sumpSt = (() => {
+    const raw = t?.sump_telemetry || device?.sump_telemetry
+    if (!raw) return null
+    if (typeof raw === 'object') return raw as SensorTelemetry
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+
+  const caps = (() => {
+    const raw = device?.capabilities
+    if (!raw) return null
+    if (typeof raw === 'object') return raw
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+
+  const isFaultActive = (() => {
+    if (!events || events.length === 0) return false
+    const faultIdx = events.findIndex((e) => e.event_type === 'fault')
+    if (faultIdx === -1) return false
+    const clearIdx = events.findIndex((e) => e.event_type === 'fault_cleared')
+    if (clearIdx !== -1 && clearIdx < faultIdx) return false
+    const recoveryIdx = events.findIndex((e) => e.event_type === 'online' || e.event_type === 'power_restored' || e.event_type === 'device_reboot')
+    if (recoveryIdx !== -1 && recoveryIdx < faultIdx) return false
+    return true
+  })()
+
+  const activeFault = (() => {
+    if (!isFaultActive || !events) return null
+    const ev = events.find((e) => e.event_type === 'fault')
+    return ev ? (parseEventData(ev.data) as FaultEventData) : null
+  })()
 
   const chartHistory = useMemo(() => {
     if (!history || history.length === 0) return []
@@ -303,9 +393,9 @@ export default function Device() {
     }))
   }, [history, hours])
 
-  const hasSump = (t?.sump_level !== undefined && t?.sump_level !== null && t?.sump_level >= 0) ||
+  const hasSump = (typeof t?.sump_level === 'number' && t.sump_level >= 0) ||
     Boolean(sumpSt) ||
-    (device.capabilities?.monitored_tanks?.includes('sump') ?? false)
+    (Array.isArray(caps?.monitored_tanks) && caps.monitored_tanks.includes('sump'))
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
@@ -319,7 +409,7 @@ export default function Device() {
     <Layout>
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => navigate('/fleet')} className="text-slate-400 hover:text-white">
+        <button onClick={() => navigate('/fleet')} className="text-slate-400 hover:text-white transition-colors">
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1">
@@ -334,17 +424,19 @@ export default function Device() {
             <p className="text-sm text-slate-400">
               {device.model_name} · {device.device_type} · fw {pgStr(device.current_fw)}
             </p>
-            {device.capabilities && (
+            {caps && (
               <div className="flex flex-wrap gap-1.5 ml-2">
-                <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
-                  Actuator: {device.capabilities.pump_actuator}
-                </span>
-                {device.capabilities.monitored_tanks && device.capabilities.monitored_tanks.length > 0 && (
+                {caps.pump_actuator && (
                   <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
-                    Tanks: {device.capabilities.monitored_tanks.join(', ')}
+                    Actuator: {String(caps.pump_actuator)}
                   </span>
                 )}
-                {device.capabilities.has_cyclic_timer && (
+                {Array.isArray(caps.monitored_tanks) && caps.monitored_tanks.length > 0 && (
+                  <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
+                    Tanks: {caps.monitored_tanks.join(', ')}
+                  </span>
+                )}
+                {caps.has_cyclic_timer && (
                   <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
                     Cyclic Timer
                   </span>
@@ -353,7 +445,7 @@ export default function Device() {
             )}
           </div>
         </div>
-        <button onClick={() => refetch()} className="text-slate-400 hover:text-white">
+        <button onClick={() => refetch()} className="text-slate-400 hover:text-white transition-colors">
           <RefreshCw size={16} />
         </button>
       </div>
@@ -375,107 +467,113 @@ export default function Device() {
 
       {/* Overview */}
       {tab === 'overview' && (
-        <div className="space-y-4">
-          {/* Active Fault Alert Banner */}
-          {activeFault && (
-            <div className="bg-red-950/80 border-2 border-red-600 rounded-xl p-4 shadow-lg text-white">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 bg-red-600 text-white font-bold rounded text-xs animate-pulse flex items-center gap-1">
-                      <ShieldAlert size={13} /> ACTIVE FAULT: {activeFault.code || 'ALERT'}
-                    </span>
-                    <span className="font-semibold text-red-200 text-base">{activeFault.name || 'Safety Protection Trip'}</span>
-                  </div>
-                  <p className="text-sm text-red-300">{activeFault.description || 'Safety protection active.'}</p>
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-red-300/90 pt-1">
-                    <span className="flex items-center gap-1 text-red-400 font-medium">
-                      <Volume2 size={13} /> Alarm Pattern: <strong className="text-red-200">{activeFault.buzzer}</strong>
-                    </span>
-                    <span>
-                      <strong className="text-red-200">Action Taken:</strong> {activeFault.action_taken}
-                    </span>
-                  </div>
-                  {activeFault.readings && (
-                    <div className="flex flex-wrap gap-3 text-xs font-mono bg-black/40 px-3 py-1.5 rounded-md border border-red-800/40 w-fit mt-1">
-                      {typeof activeFault.readings.voltage === 'number' && <span>V: {activeFault.readings.voltage.toFixed(1)}V</span>}
-                      {typeof activeFault.readings.current === 'number' && <span>I: {activeFault.readings.current.toFixed(2)}A</span>}
-                      {typeof activeFault.readings.active_power === 'number' && <span>P: {activeFault.readings.active_power.toFixed(1)}W</span>}
-                      {typeof activeFault.readings.tank_level === 'number' && <span>Level: {activeFault.readings.tank_level.toFixed(1)}%</span>}
+        <ErrorBoundary fallbackTitle="Error loading device overview">
+          <div className="space-y-4">
+            {/* Active Fault Alert Banner */}
+            {activeFault && (
+              <div className="bg-red-950/80 border-2 border-red-600 rounded-xl p-4 shadow-lg text-white">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 bg-red-600 text-white font-bold rounded text-xs animate-pulse flex items-center gap-1">
+                        <ShieldAlert size={13} /> ACTIVE FAULT: {typeof activeFault.code === 'string' ? activeFault.code : 'ALERT'}
+                      </span>
+                      <span className="font-semibold text-red-200 text-base">{typeof activeFault.name === 'string' ? activeFault.name : 'Safety Protection Trip'}</span>
                     </div>
-                  )}
-                </div>
-                <SimulatedLCD line1={activeFault.lcd_line1} line2={activeFault.lcd_line2} />
-              </div>
-            </div>
-          )}
-
-          {/* Telemetry cards */}
-          {t ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <TCard label="Pump" value={PUMP_STATE_LABEL[t.pump_state] ?? String(t.pump_state)}
-                accent={t.pump_state === 2 || t.pump_state === 3 ? 'green' : 'default'} />
-              <TCard label={hasSump ? 'Overhead Tank' : 'Tank Level'} value={t.tank_level >= 0 ? `${t.tank_level.toFixed(1)}%` : 'No data'} />
-              {hasSump && (
-                <TCard label="Sump Tank" value={t.sump_level !== undefined && t.sump_level !== null && t.sump_level >= 0 ? `${t.sump_level.toFixed(1)}%` : 'No data'} />
-              )}
-              <TCard label="Voltage" value={typeof t.voltage === 'number' ? `${t.voltage.toFixed(1)} V` : '—'} />
-              <TCard label="Current" value={typeof t.current === 'number' ? `${t.current.toFixed(2)} A` : '—'} />
-              <TCard label="Power" value={typeof t.active_power === 'number' ? `${t.active_power.toFixed(1)} W` : '—'} />
-              <TCard label="Frequency" value={typeof t.frequency === 'number' ? `${t.frequency.toFixed(1)} Hz` : '—'} />
-              <TCard label="WiFi RSSI" value={typeof t.wifi_rssi === 'number' ? `${t.wifi_rssi} dBm` : '—'} />
-              <TCard label="Runtime" value={typeof t.pump_runtime === 'number' ? `${Math.floor(t.pump_runtime / 60)}m ${t.pump_runtime % 60}s` : '—'} />
-            </div>
-          ) : (
-            <p className="text-slate-400 text-sm">No telemetry yet.</p>
-          )}
-
-          {/* Overhead Tank Sensor Telemetry & Diagnostics */}
-          <SensorDiagnosticsBox title={hasSump ? 'Overhead Tank Sensor & LoRa Telemetry' : 'Tank Sensor & LoRa Telemetry'} st={st} />
-
-          {/* Sump Tank Sensor Telemetry & Diagnostics */}
-          {hasSump && (
-            <SensorDiagnosticsBox title="Sump Tank Sensor & LoRa Telemetry" st={sumpSt} />
-          )}
-
-          {/* Hardware health */}
-          {t && (
-            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-              <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Hardware Health</h3>
-              {t.hw_status ? (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                    <HwCard label="LoRa" status={t.hw_status.lora} />
-                    <HwCard label="Power Meter" status={t.hw_status.power_meter} />
-                    <HwCard label="LCD" status={t.hw_status.lcd} />
-                    <HwCard label="NVS" status={t.hw_status.nvs} />
+                    <p className="text-sm text-red-300">{typeof activeFault.description === 'string' ? activeFault.description : 'Safety protection active.'}</p>
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-red-300/90 pt-1">
+                      {activeFault.buzzer && (
+                        <span className="flex items-center gap-1 text-red-400 font-medium">
+                          <Volume2 size={13} /> Alarm Pattern: <strong className="text-red-200">{String(activeFault.buzzer)}</strong>
+                        </span>
+                      )}
+                      {activeFault.action_taken && (
+                        <span>
+                          <strong className="text-red-200">Action Taken:</strong> {String(activeFault.action_taken)}
+                        </span>
+                      )}
+                    </div>
+                    {activeFault.readings && typeof activeFault.readings === 'object' && (
+                      <div className="flex flex-wrap gap-3 text-xs font-mono bg-black/40 px-3 py-1.5 rounded-md border border-red-800/40 w-fit mt-1">
+                        {typeof activeFault.readings.voltage === 'number' && <span>V: {activeFault.readings.voltage.toFixed(1)}V</span>}
+                        {typeof activeFault.readings.current === 'number' && <span>I: {activeFault.readings.current.toFixed(2)}A</span>}
+                        {typeof activeFault.readings.active_power === 'number' && <span>P: {activeFault.readings.active_power.toFixed(1)}W</span>}
+                        {typeof activeFault.readings.tank_level === 'number' && <span>Level: {activeFault.readings.tank_level.toFixed(1)}%</span>}
+                      </div>
+                    )}
                   </div>
-                  <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                    <InfoRow label="Last Reset Reason" value={t.reset_reason || '—'} mono />
-                    <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count)} />
-                    <InfoRow label="Free Heap" value={typeof t.free_heap === 'number' ? `${(t.free_heap / 1024).toFixed(1)} KB` : '—'} />
-                    <InfoRow label="Min Free Heap" value={typeof t.min_free_heap === 'number' ? `${(t.min_free_heap / 1024).toFixed(1)} KB` : '—'} />
-                  </dl>
-                </>
-              ) : (
-                <p className="text-slate-500 text-xs">No hw_status yet — needs firmware with 2026-07-23 telemetry update.</p>
-              )}
-            </div>
-          )}
+                  <SimulatedLCD line1={typeof activeFault.lcd_line1 === 'string' ? activeFault.lcd_line1 : undefined} line2={typeof activeFault.lcd_line2 === 'string' ? activeFault.lcd_line2 : undefined} />
+                </div>
+              </div>
+            )}
 
-          {/* Device info */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-            <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Device Info</h3>
-            <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-              <InfoRow label="Serial ID" value={device.serial_id} mono />
-              <InfoRow label="Model" value={device.model_name} />
-              <InfoRow label="Claimed" value={pgTime(device.claimed_at)} />
-              <InfoRow label="Manufactured" value={pgTime(device.manufactured_at)} />
-              <InfoRow label="MAC" value={pgStr(device.mac)} mono />
-              <InfoRow label="Last Seen" value={pgTime(device.last_seen_at)} />
-            </dl>
+            {/* Telemetry cards */}
+            {t ? (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <TCard label="Pump" value={PUMP_STATE_LABEL[t.pump_state] ?? String(t.pump_state ?? '—')}
+                  accent={t.pump_state === 2 || t.pump_state === 3 ? 'green' : 'default'} />
+                <TCard label={hasSump ? 'Overhead Tank' : 'Tank Level'} value={typeof t.tank_level === 'number' && t.tank_level >= 0 ? `${t.tank_level.toFixed(1)}%` : 'No data'} />
+                {hasSump && (
+                  <TCard label="Sump Tank" value={typeof t.sump_level === 'number' && t.sump_level >= 0 ? `${t.sump_level.toFixed(1)}%` : 'No data'} />
+                )}
+                <TCard label="Voltage" value={typeof t.voltage === 'number' ? `${t.voltage.toFixed(1)} V` : '—'} />
+                <TCard label="Current" value={typeof t.current === 'number' ? `${t.current.toFixed(2)} A` : '—'} />
+                <TCard label="Power" value={typeof t.active_power === 'number' ? `${t.active_power.toFixed(1)} W` : '—'} />
+                <TCard label="Frequency" value={typeof t.frequency === 'number' ? `${t.frequency.toFixed(1)} Hz` : '—'} />
+                <TCard label="WiFi RSSI" value={typeof t.wifi_rssi === 'number' ? `${t.wifi_rssi} dBm` : '—'} />
+                <TCard label="Runtime" value={typeof t.pump_runtime === 'number' ? `${Math.floor(t.pump_runtime / 60)}m ${t.pump_runtime % 60}s` : '—'} />
+              </div>
+            ) : (
+              <p className="text-slate-400 text-sm">No telemetry yet.</p>
+            )}
+
+            {/* Overhead Tank Sensor Telemetry & Diagnostics */}
+            <SensorDiagnosticsBox title={hasSump ? 'Overhead Tank Sensor & LoRa Telemetry' : 'Tank Sensor & LoRa Telemetry'} st={st} />
+
+            {/* Sump Tank Sensor Telemetry & Diagnostics */}
+            {hasSump && (
+              <SensorDiagnosticsBox title="Sump Tank Sensor & LoRa Telemetry" st={sumpSt} />
+            )}
+
+            {/* Hardware health */}
+            {t && (
+              <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Hardware Health</h3>
+                {t.hw_status ? (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                      <HwCard label="LoRa" status={t.hw_status.lora} />
+                      <HwCard label="Power Meter" status={t.hw_status.power_meter} />
+                      <HwCard label="LCD" status={t.hw_status.lcd} />
+                      <HwCard label="NVS" status={t.hw_status.nvs} />
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                      <InfoRow label="Last Reset Reason" value={t.reset_reason || '—'} mono />
+                      <InfoRow label="LoRa Reset Count" value={String(t.lora_reset_count)} />
+                      <InfoRow label="Free Heap" value={typeof t.free_heap === 'number' ? `${(t.free_heap / 1024).toFixed(1)} KB` : '—'} />
+                      <InfoRow label="Min Free Heap" value={typeof t.min_free_heap === 'number' ? `${(t.min_free_heap / 1024).toFixed(1)} KB` : '—'} />
+                    </dl>
+                  </>
+                ) : (
+                  <p className="text-slate-500 text-xs">No hw_status yet — needs firmware with 2026-07-23 telemetry update.</p>
+                )}
+              </div>
+            )}
+
+            {/* Device info */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+              <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Device Info</h3>
+              <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                <InfoRow label="Serial ID" value={device.serial_id} mono />
+                <InfoRow label="Model" value={device.model_name} />
+                <InfoRow label="Claimed" value={pgTime(device.claimed_at)} />
+                <InfoRow label="Manufactured" value={pgTime(device.manufactured_at)} />
+                <InfoRow label="MAC" value={pgStr(device.mac)} mono />
+                <InfoRow label="Last Seen" value={pgTime(device.last_seen_at)} />
+              </dl>
+            </div>
           </div>
-        </div>
+        </ErrorBoundary>
       )}
 
       {/* History */}
@@ -668,91 +766,95 @@ export default function Device() {
 
       {/* Controls */}
       {tab === 'controls' && (
-        <div className="space-y-4">
-          {/* Commands */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-            <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Terminal size={14} /> Send Command
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {COMMANDS.map((cmd) => (
-                <button
-                  key={cmd}
-                  onClick={() => cmdMutation.mutate(cmd)}
-                  disabled={cmdMutation.isPending}
-                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-sm font-mono rounded-md transition-colors"
-                >
-                  {cmd}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* OTA Push */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
-            <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Zap size={14} /> Push OTA
-            </h3>
-            {releases && releases.length > 0 && (
-              <div className="mb-3">
-                <label className="block text-xs text-slate-400 mb-1">Select Release</label>
-                <select
-                  onChange={(e) => setOtaUrl(e.target.value)}
-                  className="bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white w-full focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">— pick a release —</option>
-                  {releases.map((r) => (
-                    <option key={r.id} value={r.url}>
-                      {r.version} — {r.release_notes || 'no notes'}
-                    </option>
-                  ))}
-                </select>
+        <ErrorBoundary fallbackTitle="Error loading device controls">
+          <div className="space-y-4">
+            {/* Commands */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+              <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <Terminal size={14} /> Send Command
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {COMMANDS.map((cmd) => (
+                  <button
+                    key={cmd}
+                    onClick={() => cmdMutation.mutate(cmd)}
+                    disabled={cmdMutation.isPending}
+                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-sm font-mono rounded-md transition-colors"
+                  >
+                    {cmd}
+                  </button>
+                ))}
               </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                type="url"
-                value={otaUrl}
-                onChange={(e) => setOtaUrl(e.target.value)}
-                placeholder="https://fw.iot.inflection.org.in/tank/v0.2.0/..."
-                className="flex-1 bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              />
+            </div>
+
+            {/* OTA Push */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-4">
+              <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <Zap size={14} /> Push OTA
+              </h3>
+              {releases && releases.length > 0 && (
+                <div className="mb-3">
+                  <label className="block text-xs text-slate-400 mb-1">Select Release</label>
+                  <select
+                    onChange={(e) => setOtaUrl(e.target.value)}
+                    className="bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white w-full focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">— pick a release —</option>
+                    {releases.map((r) => (
+                      <option key={r.id} value={r.url}>
+                        {r.version} — {r.release_notes || 'no notes'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={otaUrl}
+                  onChange={(e) => setOtaUrl(e.target.value)}
+                  placeholder="https://fw.iot.inflection.org.in/tank/v0.2.0/..."
+                  className="flex-1 bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={() => otaUrl && otaMutation.mutate(otaUrl)}
+                  disabled={!otaUrl || otaMutation.isPending}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium rounded-md transition-colors"
+                >
+                  Push
+                </button>
+              </div>
+            </div>
+
+            {/* Danger */}
+            <div className="bg-slate-800 rounded-xl border border-red-900/50 p-4">
+              <h3 className="text-xs font-medium text-red-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+                <Trash2 size={14} /> Danger Zone
+              </h3>
               <button
-                onClick={() => otaUrl && otaMutation.mutate(otaUrl)}
-                disabled={!otaUrl || otaMutation.isPending}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-medium rounded-md transition-colors"
+                onClick={() => revokeMutation.mutate()}
+                disabled={revokeMutation.isPending}
+                className="px-3 py-1.5 bg-red-900/40 hover:bg-red-900/60 disabled:opacity-50 text-red-400 text-sm rounded-md transition-colors border border-red-800"
               >
-                Push
+                Revoke MQTT Cache
               </button>
             </div>
-          </div>
 
-          {/* Danger */}
-          <div className="bg-slate-800 rounded-xl border border-red-900/50 p-4">
-            <h3 className="text-xs font-medium text-red-400 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Trash2 size={14} /> Danger Zone
-            </h3>
-            <button
-              onClick={() => revokeMutation.mutate()}
-              disabled={revokeMutation.isPending}
-              className="px-3 py-1.5 bg-red-900/40 hover:bg-red-900/60 disabled:opacity-50 text-red-400 text-sm rounded-md transition-colors border border-red-800"
-            >
-              Revoke MQTT Cache
-            </button>
+            {/* Result output */}
+            {cmdResult && (
+              <div className="bg-slate-950 border border-slate-700 rounded-xl p-4">
+                <pre className="text-xs text-green-400 overflow-auto whitespace-pre-wrap">{cmdResult}</pre>
+              </div>
+            )}
           </div>
-
-          {/* Result output */}
-          {cmdResult && (
-            <div className="bg-slate-950 border border-slate-700 rounded-xl p-4">
-              <pre className="text-xs text-green-400 overflow-auto whitespace-pre-wrap">{cmdResult}</pre>
-            </div>
-          )}
-        </div>
+        </ErrorBoundary>
       )}
 
       {/* Settings */}
       {tab === 'settings' && (
-        <SettingsTab device={device} deviceId={deviceId} />
+        <ErrorBoundary fallbackTitle="Error loading device settings">
+          <SettingsTab device={device} deviceId={resolvedDeviceId} />
+        </ErrorBoundary>
       )}
     </Layout>
   )
@@ -760,37 +862,40 @@ export default function Device() {
 
 function TCard({ label, value, accent = 'default' }: {
   label: string
-  value: string
+  value: unknown
   accent?: 'green' | 'default'
 }) {
+  const displayVal = typeof value === 'string' ? value : String(value ?? '—')
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-3">
       <p className="text-xs text-slate-400 mb-1">{label}</p>
       <p className={`text-lg font-semibold ${accent === 'green' ? 'text-green-400' : 'text-white'}`}>
-        {value}
+        {displayVal}
       </p>
     </div>
   )
 }
 
-function HwCard({ label, status }: { label: string; status: HwStatus[keyof HwStatus] }) {
-  const ok = status === 'ok'
+function HwCard({ label, status }: { label: string; status: unknown }) {
+  const statusStr = typeof status === 'string' ? status : String(status ?? 'unknown')
+  const ok = statusStr.toLowerCase() === 'ok'
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-3">
       <p className="text-xs text-slate-400 mb-1">{label}</p>
       <p className={`text-sm font-semibold flex items-center gap-1.5 ${ok ? 'text-green-400' : 'text-red-400'}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-green-400' : 'bg-red-400'}`} />
-        {status}
+        {statusStr}
       </p>
     </div>
   )
 }
 
-function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoRow({ label, value, mono }: { label: string; value: unknown; mono?: boolean }) {
+  const displayVal = typeof value === 'string' ? value : String(value ?? '—')
   return (
     <>
       <dt className="text-slate-400">{label}</dt>
-      <dd className={`text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>{value}</dd>
+      <dd className={`text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>{displayVal}</dd>
     </>
   )
 }
@@ -825,7 +930,9 @@ function ChartCard({ title, data, dataKey, color, stepLine = false, yDomain }: {
   )
 }
 
-function SimulatedLCD({ line1, line2 }: { line1?: string; line2?: string }) {
+function SimulatedLCD({ line1, line2 }: { line1?: unknown; line2?: unknown }) {
+  const l1 = typeof line1 === 'string' ? line1 : String(line1 ?? '                ')
+  const l2 = typeof line2 === 'string' ? line2 : String(line2 ?? '                ')
   return (
     <div className="bg-emerald-950/90 border-2 border-emerald-600/80 rounded-lg p-2.5 shadow-inner font-mono text-emerald-300 select-none tracking-widest text-xs w-full max-w-[260px]">
       <div className="flex items-center justify-between text-[10px] text-emerald-500/80 border-b border-emerald-800/60 pb-1 mb-1 uppercase font-sans">
@@ -833,8 +940,8 @@ function SimulatedLCD({ line1, line2 }: { line1?: string; line2?: string }) {
         <span className="text-[9px] bg-emerald-900/80 px-1 py-0.2 rounded text-emerald-300">USER SCREEN</span>
       </div>
       <div className="bg-black/60 rounded p-1.5 border border-emerald-800/40 space-y-0.5">
-        <div className="whitespace-pre overflow-hidden text-[11px] leading-tight text-emerald-400">{line1 || '                '}</div>
-        <div className="whitespace-pre overflow-hidden text-[11px] font-bold text-emerald-200 leading-tight">{line2 || '                '}</div>
+        <div className="whitespace-pre overflow-hidden text-[11px] leading-tight text-emerald-400">{l1}</div>
+        <div className="whitespace-pre overflow-hidden text-[11px] font-bold text-emerald-200 leading-tight">{l2}</div>
       </div>
     </div>
   )

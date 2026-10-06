@@ -22,12 +22,22 @@ api.interceptors.response.use(
   },
 )
 
-export function pgStr(v: string | null | undefined): string {
-  return v ?? '—'
+export function pgStr(v: unknown): string {
+  if (v == null) return '—'
+  if (typeof v === 'string') return v.trim() || '—'
+  if (typeof v === 'object' && v !== null && 'String' in v) {
+    const s = String((v as { String?: unknown }).String ?? '')
+    return s.trim() || '—'
+  }
+  return String(v)
 }
 
-export function pgTime(v: string | null | undefined): string {
+export function pgTime(v: unknown): string {
   if (!v) return '—'
-  const d = new Date(v)
+  if (typeof v === 'object' && v !== null && 'Time' in v) {
+    const d = new Date(String((v as { Time?: unknown }).Time ?? ''))
+    return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+  }
+  const d = new Date(String(v))
   return isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
