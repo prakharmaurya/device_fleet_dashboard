@@ -376,6 +376,11 @@ export default function Device() {
     if (clearIdx !== -1 && clearIdx < faultIdx) return false
     const recoveryIdx = events.findIndex((e) => e.event_type === 'online' || e.event_type === 'power_restored' || e.event_type === 'device_reboot')
     if (recoveryIdx !== -1 && recoveryIdx < faultIdx) return false
+    const pumpStartedIdx = events.findIndex((e) => e.event_type === 'pump_state' && (() => {
+      const d = parseEventData(e.data)
+      return d.to_state === 2 || d.to_state === 3
+    })())
+    if (pumpStartedIdx !== -1 && pumpStartedIdx < faultIdx) return false
     return true
   })()
 
