@@ -36,6 +36,16 @@ const HISTORY_PRESETS = [
   { hours: 720, label: '30d' },
 ] as const
 
+const EVENT_TIME_PRESETS = [
+  { hours: 6, label: '6h' },
+  { hours: 24, label: '24h' },
+  { hours: 72, label: '3d' },
+  { hours: 168, label: '7d' },
+  { hours: 336, label: '14d' },
+  { hours: 720, label: '30d' },
+  { hours: 0, label: 'All' },
+] as const
+
 
 
 export function parseEventData(raw: unknown): Record<string, any> {
@@ -219,6 +229,7 @@ export default function Device() {
   const [cmdResult, setCmdResult] = useState<string | null>(null)
   const [eventCategory, setEventCategory] = useState<string>('all')
   const [eventSearch, setEventSearch] = useState<string>('')
+  const [eventHours, setEventHours] = useState<number>(24)
   const [isHistorySynced, setIsHistorySynced] = useState<boolean>(true)
 
   const { data: device, isLoading, isError, refetch } = useQuery({
@@ -238,7 +249,7 @@ export default function Device() {
 
   const { data: events } = useQuery({
     queryKey: ['admin-device-events', resolvedDeviceId],
-    queryFn: () => getAdminDeviceEvents(resolvedDeviceId),
+    queryFn: () => getAdminDeviceEvents(resolvedDeviceId, 500),
     enabled: resolvedDeviceId > 0,
     refetchInterval: 15_000,
   })
@@ -281,6 +292,12 @@ export default function Device() {
     const start = end - hours * 3600 * 1000
     return { historyMinMs: start, historyMaxMs: end }
   }, [hours, history])
+
+  const { eventMinMs, eventMaxMs } = useMemo(() => {
+    const end = Date.now()
+    const start = eventHours > 0 ? end - eventHours * 3600 * 1000 : undefined
+    return { eventMinMs: start, eventMaxMs: end }
+  }, [eventHours, events])
 
   const chronologicalTelemetry = useMemo(() => {
     if (!history || history.length === 0) return []
@@ -350,13 +367,34 @@ export default function Device() {
   }, [events])
 
   const onlineOfflineSeries = useMemo<[number, number | null][]>(() => {
-    if (!events || events.length === 0) return []
-    return [...events]
+    if (!events || events.length === 0) {
+      if (device?.is_online !== undefined) {
+        const now = Date.now()
+        const start = eventHours > 0 ? now - eventHours * 3600 * 1000 : now - 24 * 3600 * 1000
+        return [
+          [start, device.is_online ? 1 : 0],
+          [now, device.is_online ? 1 : 0],
+        ]
+      }
+      return []
+    }
+    const minMs = eventHours > 0 ? Date.now() - eventHours * 3600 * 1000 : 0
+    const raw = [...events]
       .filter((ev) => (ev.event_type === 'online' || ev.event_type === 'offline') && ev.ts)
       .map((ev) => [new Date(ev.ts!).getTime(), ev.event_type === 'online' ? 1 : 0] as [number, number])
-      .filter(([t]) => !isNaN(t))
+      .filter(([t]) => !isNaN(t) && (minMs === 0 || t >= minMs - 3600000))
       .sort((a, b) => a[0] - b[0])
-  }, [events])
+
+    if (raw.length === 0 && device?.is_online !== undefined) {
+      const now = Date.now()
+      const start = eventHours > 0 ? now - eventHours * 3600 * 1000 : now - 24 * 3600 * 1000
+      return [
+        [start, device.is_online ? 1 : 0],
+        [now, device.is_online ? 1 : 0],
+      ]
+    }
+    return raw
+  }, [events, eventHours, device?.is_online])
 
   if (isLoading) {
     return (
@@ -759,8 +797,41 @@ export default function Device() {
       {tab === 'events' && (
         <ErrorBoundary fallbackTitle="Error loading device events">
           <div className="space-y-4">
-            {/* Category Filter Pills and Search */}
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            {/* Event Time Presets & Search */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 font-medium mr-1 flex items-center gap-1">
+                  <Clock size={12} /> Period:
+                </span>
+                {EVENT_TIME_PRESETS.map(({ hours: h, label }) => (
+                  <button
+                    key={h}
+                    onClick={() => setEventHours(h)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      eventHours === h
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative w-full md:w-64">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={eventSearch}
+                  onChange={(e) => setEventSearch(e.target.value)}
+                  placeholder="Search events, commands, users..."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Category Filter Pills and Meta */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap gap-1.5 bg-slate-900/60 p-1.5 rounded-lg border border-slate-700/60">
                 {[
                   { id: 'all', label: 'All Events' },
@@ -785,16 +856,11 @@ export default function Device() {
                 ))}
               </div>
 
-              <div className="relative w-full md:w-64">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  value={eventSearch}
-                  onChange={(e) => setEventSearch(e.target.value)}
-                  placeholder="Search events, commands, users..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+              <span className="text-xs text-slate-400 font-mono">
+                {eventHours > 0
+                  ? `Window: last ${eventHours < 24 ? `${eventHours}h` : `${eventHours / 24}d`}`
+                  : 'Window: all loaded records'}
+              </span>
             </div>
 
             {/* Online/offline timeline chart */}
@@ -805,13 +871,15 @@ export default function Device() {
                 color="#60a5fa"
                 stepLine
                 yAxisType="binary"
-                height={160}
-                showSlider={false}
+                minTimeMs={eventMinMs}
+                maxTimeMs={eventMaxMs}
+                height={240}
+                showSlider={true}
                 description="Real-time device connectivity status over time"
               />
             )}
 
-            {/* Pump Events Timeline when pump category is selected */}
+            {/* Pump Events Timeline when pump category or all is selected */}
             {eventCategory === 'pump' && pumpStateSeries.length > 0 && (
               <TimeSeriesChart
                 title="Pump Operation & Events Timeline"
@@ -819,10 +887,11 @@ export default function Device() {
                 color="#a78bfa"
                 stepLine
                 yAxisType="pump_state"
-                minTimeMs={historyMinMs}
-                maxTimeMs={historyMaxMs}
+                minTimeMs={eventMinMs ?? historyMinMs}
+                maxTimeMs={eventMaxMs}
                 markEvents={pumpEventMarkers}
-                height={210}
+                height={240}
+                showSlider={true}
                 description="True-time pump activity with start/stop triggers and runtimes"
               />
             )}
@@ -831,6 +900,12 @@ export default function Device() {
             <div className="space-y-3">
               {(() => {
                 const filtered = (events ?? []).filter((ev) => {
+                  if (eventHours > 0 && ev.ts) {
+                    const evTime = new Date(ev.ts).getTime()
+                    if (!isNaN(evTime) && evTime < Date.now() - eventHours * 3600 * 1000) {
+                      return false
+                    }
+                  }
                   if (eventCategory === 'fault' && ev.event_type !== 'fault' && ev.event_type !== 'fault_cleared' && ev.event_type !== 'sensor_fault' && ev.event_type !== 'sensor_fault_cleared' && ev.event_type !== 'magnet_degraded') return false
                   if (eventCategory === 'command' && ev.event_type !== 'command') return false
                   if (eventCategory === 'config' && ev.event_type !== 'config_change' && ev.event_type !== 'config_sync') return false

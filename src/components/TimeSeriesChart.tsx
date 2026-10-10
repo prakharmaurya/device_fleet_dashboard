@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as echarts from 'echarts'
-import { ZoomIn, ZoomOut, RotateCcw, Link2, Unlink, Info } from 'lucide-react'
+import { ZoomIn, ZoomOut, RotateCcw, Link2, Unlink } from 'lucide-react'
 
 export interface ChartEventMarker {
   time: number
@@ -42,7 +42,7 @@ export default function TimeSeriesChart({
   unit = '',
   minTimeMs,
   maxTimeMs,
-  height = 230,
+  height = 250,
   markEvents = [],
   syncGroup,
   isSynced = true,
@@ -53,6 +53,7 @@ export default function TimeSeriesChart({
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstance = useRef<echarts.ECharts | null>(null)
   const prevRangeRef = useRef<{ min?: number; max?: number }>({})
+  const currentZoomRef = useRef<{ start: number; end: number }>({ start: 0, end: 100 })
   const [zoomRangeText, setZoomRangeText] = useState<string>('')
   const [isZoomed, setIsZoomed] = useState<boolean>(false)
 
@@ -93,18 +94,18 @@ export default function TimeSeriesChart({
     const computedMin = minTimeMs ?? (data.length > 0 ? data[0][0] : now - 24 * 3600 * 1000)
     const computedMax = maxTimeMs ?? now
 
-    // Check if the time range changed (e.g. user selected 6h vs 7d)
+    // Check if the overall time window changed (e.g. user selected 6h vs 7d)
     const isNewTimeWindow =
       prevRangeRef.current.min !== computedMin || prevRangeRef.current.max !== computedMax
     prevRangeRef.current = { min: computedMin, max: computedMax }
 
     // Check if user currently has an active zoom that should be preserved during data refresh
-    const prevOption = chart.getOption() as any
-    const prevZoom = prevOption?.dataZoom?.[0]
+    const curZoom = currentZoomRef.current
     const shouldPreserveZoom =
-      !isNewTimeWindow && prevZoom && (prevZoom.start > 0.5 || prevZoom.end < 99.5)
+      !isNewTimeWindow && (curZoom.start > 0.5 || curZoom.end < 99.5)
 
     if (isNewTimeWindow) {
+      currentZoomRef.current = { start: 0, end: 100 }
       setIsZoomed(false)
       setZoomRangeText('')
     }
@@ -268,8 +269,8 @@ export default function TimeSeriesChart({
       yAxisConfig.max = yDomain[1]
     }
 
-    // Grid spacing
-    const gridBottom = showSlider ? 36 : 24
+    // Grid spacing: ample bottom margin to prevent slider and X-axis time values from overlapping
+    const gridBottom = showSlider ? 70 : 30
 
     const option: echarts.EChartsOption = {
       backgroundColor: 'transparent',
@@ -382,6 +383,7 @@ export default function TimeSeriesChart({
           color: '#94a3b8',
           fontSize: 10,
           hideOverlap: true,
+          margin: 10,
         },
         splitLine: {
           show: true,
@@ -402,17 +404,17 @@ export default function TimeSeriesChart({
           zoomOnMouseWheel: true,
           moveOnMouseMove: true,
           moveOnMouseWheel: false,
-          ...(shouldPreserveZoom && prevZoom ? { start: prevZoom.start, end: prevZoom.end } : {}),
+          ...(shouldPreserveZoom ? { start: curZoom.start, end: curZoom.end } : {}),
         },
-        // Slider at bottom
+        // Slider at bottom (placed cleanly with margin below X-axis labels)
         ...(showSlider
           ? [
               {
                 type: 'slider' as const,
                 xAxisIndex: 0,
                 filterMode: 'none' as const,
-                height: 18,
-                bottom: 6,
+                height: 20,
+                bottom: 8,
                 borderColor: '#334155',
                 backgroundColor: '#090d16',
                 fillerColor: 'rgba(59, 130, 246, 0.22)',
@@ -439,7 +441,7 @@ export default function TimeSeriesChart({
                   fontSize: 9,
                 },
                 brushSelect: false,
-                ...(shouldPreserveZoom && prevZoom ? { start: prevZoom.start, end: prevZoom.end } : {}),
+                ...(shouldPreserveZoom ? { start: curZoom.start, end: curZoom.end } : {}),
               },
             ]
           : []),
@@ -488,35 +490,44 @@ export default function TimeSeriesChart({
 
     chart.setOption(option, true)
 
-    // Handle dataZoom events to update visual range text
-    const handleDataZoom = () => {
-      const opt = chart.getOption() as any
-      if (opt && opt.dataZoom && opt.dataZoom[0]) {
-        // Compute start/end time
-        const startPercent = opt.dataZoom[0].start ?? 0
-        const endPercent = opt.dataZoom[0].end ?? 100
+    // Handle dataZoom events to update visual range text and keep currentZoomRef in sync
+    const handleDataZoom = (e: any) => {
+      let start = 0
+      let end = 100
+      if (e && e.batch && e.batch[0]) {
+        start = typeof e.batch[0].start === 'number' ? e.batch[0].start : 0
+        end = typeof e.batch[0].end === 'number' ? e.batch[0].end : 100
+      } else if (e && typeof e.start === 'number') {
+        start = e.start
+        end = e.end
+      } else {
+        const opt = chart.getOption() as any
+        start = opt?.dataZoom?.[0]?.start ?? 0
+        end = opt?.dataZoom?.[0]?.end ?? 100
+      }
+
+      currentZoomRef.current = { start, end }
+
+      const isActivelyZoomed = start > 0.5 || end < 99.5
+      setIsZoomed(isActivelyZoomed)
+
+      if (isActivelyZoomed) {
         const totalDuration = computedMax - computedMin
-        const curStart = computedMin + (totalDuration * startPercent) / 100
-        const curEnd = computedMin + (totalDuration * endPercent) / 100
+        const curStart = computedMin + (totalDuration * start) / 100
+        const curEnd = computedMin + (totalDuration * end) / 100
+        const hoursSpan = (curEnd - curStart) / 3600000
+        const spanStr =
+          hoursSpan < 1
+            ? `${Math.round(hoursSpan * 60)}m span`
+            : hoursSpan < 24
+            ? `${hoursSpan.toFixed(1)}h span`
+            : `${(hoursSpan / 24).toFixed(1)}d span`
 
-        const isActivelyZoomed = startPercent > 0.5 || endPercent < 99.5
-        setIsZoomed(isActivelyZoomed)
-
-        if (isActivelyZoomed) {
-          const hoursSpan = (curEnd - curStart) / 3600000
-          const spanStr =
-            hoursSpan < 1
-              ? `${Math.round(hoursSpan * 60)}m span`
-              : hoursSpan < 24
-              ? `${hoursSpan.toFixed(1)}h span`
-              : `${(hoursSpan / 24).toFixed(1)}d span`
-
-          const startStr = new Date(curStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          const endStr = new Date(curEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          setZoomRangeText(`${startStr} - ${endStr} (${spanStr})`)
-        } else {
-          setZoomRangeText('')
-        }
+        const startStr = new Date(curStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        const endStr = new Date(curEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        setZoomRangeText(`${startStr} - ${endStr} (${spanStr})`)
+      } else {
+        setZoomRangeText('')
       }
     }
 
@@ -559,49 +570,47 @@ export default function TimeSeriesChart({
     }
   }, [])
 
-  // Zoom In / Out / Reset Handlers (progressive incremental zooming)
+  // Zoom In / Out / Reset Handlers
   const handleZoomIn = useCallback(() => {
     if (!chartInstance.current) return
-    const opt = chartInstance.current.getOption() as any
-    const dz = opt?.dataZoom?.[0]
-    const curStart = dz?.start ?? 0
-    const curEnd = dz?.end ?? 100
+    const curStart = currentZoomRef.current.start
+    const curEnd = currentZoomRef.current.end
     const span = curEnd - curStart
-    if (span <= 5) return // max zoom level
-    const delta = span * 0.2
-    const newStart = Math.min(curStart + delta, 95)
-    const newEnd = Math.max(curEnd - delta, 5)
+    if (span <= 2) return // maximum zoom level
+    const delta = Math.max(span * 0.2, 1)
+    const newStart = Math.min(curStart + delta, 98)
+    const newEnd = Math.max(curEnd - delta, 2)
+    currentZoomRef.current = { start: newStart, end: newEnd }
     chartInstance.current.dispatchAction({
       type: 'dataZoom',
-      dataZoomIndex: 0,
       start: newStart,
       end: newEnd,
     })
+    setIsZoomed(newStart > 0.5 || newEnd < 99.5)
   }, [])
 
   const handleZoomOut = useCallback(() => {
     if (!chartInstance.current) return
-    const opt = chartInstance.current.getOption() as any
-    const dz = opt?.dataZoom?.[0]
-    const curStart = dz?.start ?? 0
-    const curEnd = dz?.end ?? 100
+    const curStart = currentZoomRef.current.start
+    const curEnd = currentZoomRef.current.end
     const span = curEnd - curStart
-    const delta = Math.max(span * 0.25, 5)
+    const delta = Math.max(span * 0.25, 4)
     const newStart = Math.max(0, curStart - delta)
     const newEnd = Math.min(100, curEnd + delta)
+    currentZoomRef.current = { start: newStart, end: newEnd }
     chartInstance.current.dispatchAction({
       type: 'dataZoom',
-      dataZoomIndex: 0,
       start: newStart,
       end: newEnd,
     })
+    setIsZoomed(newStart > 0.5 || newEnd < 99.5)
   }, [])
 
   const handleResetZoom = useCallback(() => {
     if (!chartInstance.current) return
+    currentZoomRef.current = { start: 0, end: 100 }
     chartInstance.current.dispatchAction({
       type: 'dataZoom',
-      dataZoomIndex: 0,
       start: 0,
       end: 100,
     })
@@ -623,7 +632,7 @@ export default function TimeSeriesChart({
           </h4>
           {stepLine && (
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">
-              Step-Line (True Time Scale)
+              Step-Line
             </span>
           )}
           {description && (
@@ -696,7 +705,7 @@ export default function TimeSeriesChart({
 
       {/* Chart Canvas */}
       {data.length === 0 ? (
-        <div className="h-40 flex items-center justify-center text-slate-500 text-xs bg-slate-900/40 rounded-lg border border-slate-800">
+        <div className="h-44 flex items-center justify-center text-slate-500 text-xs bg-slate-900/40 rounded-lg border border-slate-800">
           No telemetry points recorded for this time period.
         </div>
       ) : (
@@ -707,17 +716,6 @@ export default function TimeSeriesChart({
           title="Mouse wheel to zoom, click and drag to pan across time"
         />
       )}
-
-      {/* Hint Footer */}
-      <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 pt-1 border-t border-slate-800/80">
-        <span className="flex items-center gap-1">
-          <Info size={10} className="text-slate-400" />
-          <span>Continuous linear time scale: gaps accurately represent real elapsed time.</span>
-        </span>
-        <span className="font-mono text-slate-400">
-          Scroll: Zoom • Drag: Pan
-        </span>
-      </div>
     </div>
   )
 }
