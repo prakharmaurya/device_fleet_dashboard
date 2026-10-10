@@ -5,11 +5,10 @@ import {
   ArrowLeft, RefreshCw, Zap, Terminal, Trash2,
   CheckCircle2, Play, Square, Settings, Wifi, ShieldAlert,
   Monitor, Volume2, Search, Power, Clock, Radio, AlertTriangle,
-  Sliders, Save, Check, AlertCircle, Gauge, Waves
+  Sliders, Save, Check, AlertCircle, Gauge, Waves,
+  Link2, Unlink
 } from 'lucide-react'
-import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
+import TimeSeriesChart, { type ChartEventMarker } from '../components/TimeSeriesChart'
 import {
   getAdminDevice, getAdminDeviceHistory, getAdminDeviceEvents,
   sendCommand, revokeMqttCache, getDeviceConfig, sendDeviceConfig,
@@ -37,15 +36,7 @@ const HISTORY_PRESETS = [
   { hours: 720, label: '30d' },
 ] as const
 
-function formatHistoryTime(ts: string | null | undefined, hoursSpan: number): string {
-  if (!ts) return ''
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ''
-  if (hoursSpan <= 24) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
+
 
 export function parseEventData(raw: unknown): Record<string, any> {
   if (!raw) return {}
@@ -228,6 +219,7 @@ export default function Device() {
   const [cmdResult, setCmdResult] = useState<string | null>(null)
   const [eventCategory, setEventCategory] = useState<string>('all')
   const [eventSearch, setEventSearch] = useState<string>('')
+  const [isHistorySynced, setIsHistorySynced] = useState<boolean>(true)
 
   const { data: device, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-device', deviceKey],
@@ -241,7 +233,7 @@ export default function Device() {
   const { data: history } = useQuery({
     queryKey: ['admin-device-history', resolvedDeviceId, hours],
     queryFn: () => getAdminDeviceHistory(resolvedDeviceId, hours),
-    enabled: tab === 'history' && resolvedDeviceId > 0,
+    enabled: (tab === 'history' || tab === 'events') && resolvedDeviceId > 0,
   })
 
   const { data: events } = useQuery({
@@ -284,23 +276,87 @@ export default function Device() {
     onError: () => setCmdResult('Revoke failed'),
   })
 
-  const chartHistory = useMemo(() => {
-    if (!history || history.length === 0) return []
-    // Backend returns ts DESC (newest first). Reverse for chronological left-to-right display:
-    const chronological = [...history].reverse()
-    const maxPoints = 600
-    const step = Math.ceil(chronological.length / maxPoints)
-    const sampled = step > 1 ? chronological.filter((_, idx) => idx % step === 0 || idx === chronological.length - 1) : chronological
+  const { historyMinMs, historyMaxMs } = useMemo(() => {
+    const end = Date.now()
+    const start = end - hours * 3600 * 1000
+    return { historyMinMs: start, historyMaxMs: end }
+  }, [hours, history])
 
-    return sampled.map((r) => ({
-      t: formatHistoryTime(r.ts, hours),
-      pump_state: r.pump_state,
-      tank_level: r.tank_level,
-      current: r.current,
-      active_power: r.active_power,
-      voltage: r.voltage,
-    }))
-  }, [history, hours])
+  const chronologicalTelemetry = useMemo(() => {
+    if (!history || history.length === 0) return []
+    return [...history]
+      .filter((r) => r.ts && !isNaN(new Date(r.ts).getTime()))
+      .sort((a, b) => new Date(a.ts!).getTime() - new Date(b.ts!).getTime())
+  }, [history])
+
+  const pumpStateSeries = useMemo<[number, number | null][]>(() => {
+    return chronologicalTelemetry.map((r) => [new Date(r.ts!).getTime(), r.pump_state])
+  }, [chronologicalTelemetry])
+
+  const tankLevelSeries = useMemo<[number, number | null][]>(() => {
+    return chronologicalTelemetry.map((r) => [new Date(r.ts!).getTime(), r.tank_level])
+  }, [chronologicalTelemetry])
+
+  const currentSeries = useMemo<[number, number | null][]>(() => {
+    return chronologicalTelemetry.map((r) => [new Date(r.ts!).getTime(), r.current])
+  }, [chronologicalTelemetry])
+
+  const powerSeries = useMemo<[number, number | null][]>(() => {
+    return chronologicalTelemetry.map((r) => [new Date(r.ts!).getTime(), r.active_power])
+  }, [chronologicalTelemetry])
+
+  const voltageSeries = useMemo<[number, number | null][]>(() => {
+    return chronologicalTelemetry.map((r) => [new Date(r.ts!).getTime(), r.voltage])
+  }, [chronologicalTelemetry])
+
+  const pumpEventMarkers = useMemo<ChartEventMarker[]>(() => {
+    if (!events || events.length === 0) return []
+    const markers: ChartEventMarker[] = []
+
+    for (const ev of events) {
+      if (!ev.ts) continue
+      const time = new Date(ev.ts).getTime()
+      if (isNaN(time)) continue
+
+      const d = parseEventData(ev.data)
+
+      if (ev.event_type === 'pump_state') {
+        const p = d as PumpStateEventData
+        const isStart = p.to_state === 2 || p.to_state === 3
+        const isForce = p.to_state === 3
+        markers.push({
+          time,
+          type: isStart ? 'pump_start' : 'pump_stop',
+          label: isStart ? (isForce ? 'Pump Force Started' : 'Pump Started') : 'Pump Stopped',
+          trigger: p.trigger_source || 'unknown',
+          runtime: p.runtime_s,
+          reason: p.stop_reason,
+          description: isStart
+            ? `Started via ${p.trigger_source || 'automation'}`
+            : `Stopped after ${p.runtime_s ? Math.floor(p.runtime_s / 60) + 'm ' + (p.runtime_s % 60) + 's' : 'run'}${p.stop_reason ? ` (${p.stop_reason})` : ''}`,
+        })
+      } else if (ev.event_type === 'fault') {
+        const fault = d as FaultEventData
+        markers.push({
+          time,
+          type: 'fault',
+          label: `Fault: ${fault.code || 'Alert'}`,
+          description: fault.name || fault.description || 'Safety Trip',
+        })
+      }
+    }
+
+    return markers
+  }, [events])
+
+  const onlineOfflineSeries = useMemo<[number, number | null][]>(() => {
+    if (!events || events.length === 0) return []
+    return [...events]
+      .filter((ev) => (ev.event_type === 'online' || ev.event_type === 'offline') && ev.ts)
+      .map((ev) => [new Date(ev.ts!).getTime(), ev.event_type === 'online' ? 1 : 0] as [number, number])
+      .filter(([t]) => !isNaN(t))
+      .sort((a, b) => a[0] - b[0])
+  }, [events])
 
   if (isLoading) {
     return (
@@ -609,46 +665,87 @@ export default function Device() {
                   </button>
                 ))}
               </div>
-              {history && history.length > 0 && (
-                <span className="text-xs text-slate-400">
-                  {history.length.toLocaleString()} records loaded ({hours < 24 ? `${hours}h` : `${hours / 24}d`})
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsHistorySynced((prev) => !prev)}
+                  className={`text-xs px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 ${
+                    isHistorySynced
+                      ? 'bg-blue-900/40 text-blue-300 border border-blue-700/60'
+                      : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-white'
+                  }`}
+                  title="When synced, zooming or panning any graph scrolls all graphs together"
+                >
+                  {isHistorySynced ? <Link2 size={13} /> : <Unlink size={13} />}
+                  <span>{isHistorySynced ? 'Synced Zoom (Linked)' : 'Independent Zoom'}</span>
+                </button>
+                {history && history.length > 0 && (
+                  <span className="text-xs text-slate-400">
+                    {history.length.toLocaleString()} records loaded ({hours < 24 ? `${hours}h` : `${hours / 24}d`})
+                  </span>
+                )}
+              </div>
             </div>
 
-            {chartHistory && chartHistory.length > 0 ? (
+            {chronologicalTelemetry.length > 0 ? (
               <div className="space-y-4">
-                <ChartCard
-                  title="Pump State (0=OFF 2=ON 3=FORCE)"
-                  data={chartHistory}
-                  dataKey="pump_state"
+                <TimeSeriesChart
+                  title="Pump State (0=OFF, 1=TRANSITION, 2=ON, 3=FORCE)"
+                  data={pumpStateSeries}
                   color="#a78bfa"
                   stepLine
-                  yDomain={[0, 3]}
+                  yAxisType="pump_state"
+                  minTimeMs={historyMinMs}
+                  maxTimeMs={historyMaxMs}
+                  markEvents={pumpEventMarkers}
+                  syncGroup="fleet-device-history"
+                  isSynced={isHistorySynced}
+                  onToggleSync={() => setIsHistorySynced((prev) => !prev)}
+                  description="Proportional time scale with pump start/stop and fault markers"
                 />
-                <ChartCard
+                <TimeSeriesChart
                   title="Tank Level (%)"
-                  data={chartHistory}
-                  dataKey="tank_level"
+                  data={tankLevelSeries}
                   color="#60a5fa"
+                  yAxisType="percent"
+                  unit="%"
+                  minTimeMs={historyMinMs}
+                  maxTimeMs={historyMaxMs}
+                  syncGroup="fleet-device-history"
+                  isSynced={isHistorySynced}
+                  onToggleSync={() => setIsHistorySynced((prev) => !prev)}
                 />
-                <ChartCard
+                <TimeSeriesChart
                   title="Current (A)"
-                  data={chartHistory}
-                  dataKey="current"
+                  data={currentSeries}
                   color="#f472b6"
+                  unit="A"
+                  minTimeMs={historyMinMs}
+                  maxTimeMs={historyMaxMs}
+                  syncGroup="fleet-device-history"
+                  isSynced={isHistorySynced}
+                  onToggleSync={() => setIsHistorySynced((prev) => !prev)}
                 />
-                <ChartCard
+                <TimeSeriesChart
                   title="Power (W)"
-                  data={chartHistory}
-                  dataKey="active_power"
+                  data={powerSeries}
                   color="#34d399"
+                  unit="W"
+                  minTimeMs={historyMinMs}
+                  maxTimeMs={historyMaxMs}
+                  syncGroup="fleet-device-history"
+                  isSynced={isHistorySynced}
+                  onToggleSync={() => setIsHistorySynced((prev) => !prev)}
                 />
-                <ChartCard
+                <TimeSeriesChart
                   title="Voltage (V)"
-                  data={chartHistory}
-                  dataKey="voltage"
+                  data={voltageSeries}
                   color="#fbbf24"
+                  unit="V"
+                  minTimeMs={historyMinMs}
+                  maxTimeMs={historyMaxMs}
+                  syncGroup="fleet-device-history"
+                  isSynced={isHistorySynced}
+                  onToggleSync={() => setIsHistorySynced((prev) => !prev)}
                 />
               </div>
             ) : (
@@ -701,44 +798,34 @@ export default function Device() {
             </div>
 
             {/* Online/offline timeline chart */}
-            {(events ?? []).length > 0 && (() => {
-              const sorted = [...(events ?? [])].reverse()
-              const rawStepData = sorted
-                .filter((ev) => (ev.event_type === 'online' || ev.event_type === 'offline') && ev.ts)
-                .map((ev) => {
-                  const dt = new Date(ev.ts!)
-                  return {
-                    t: isNaN(dt.getTime()) ? '—' : dt.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                    v: ev.event_type === 'online' ? 1 : 0,
-                  }
-                })
-              const step = Math.ceil(rawStepData.length / 200)
-              const stepData = step > 1 ? rawStepData.filter((_, idx) => idx % step === 0 || idx === rawStepData.length - 1) : rawStepData
-              return stepData.length > 0 ? (
-                <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 min-w-0">
-                  <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">Online / Offline Timeline</h4>
-                  <div className="h-28 w-full">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                      <LineChart data={stepData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                        <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#94a3b8' }} interval="preserveStartEnd" />
-                        <YAxis
-                          domain={[0, 1]} ticks={[0, 1]}
-                          tickFormatter={(v: number) => v === 1 ? 'ON' : 'OFF'}
-                          tick={{ fontSize: 10, fill: '#94a3b8' }} width={36}
-                        />
-                        <Tooltip
-                          contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-                          labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-                          formatter={(v) => [Number(v) === 1 ? 'Online' : 'Offline', 'Status']}
-                        />
-                        <Line type="stepAfter" dataKey="v" stroke="#60a5fa" dot={false} strokeWidth={2} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              ) : null
-            })()}
+            {onlineOfflineSeries.length > 0 && (
+              <TimeSeriesChart
+                title="Online / Offline Timeline"
+                data={onlineOfflineSeries}
+                color="#60a5fa"
+                stepLine
+                yAxisType="binary"
+                height={160}
+                showSlider={false}
+                description="Real-time device connectivity status over time"
+              />
+            )}
+
+            {/* Pump Events Timeline when pump category is selected */}
+            {eventCategory === 'pump' && pumpStateSeries.length > 0 && (
+              <TimeSeriesChart
+                title="Pump Operation & Events Timeline"
+                data={pumpStateSeries}
+                color="#a78bfa"
+                stepLine
+                yAxisType="pump_state"
+                minTimeMs={historyMinMs}
+                maxTimeMs={historyMaxMs}
+                markEvents={pumpEventMarkers}
+                height={210}
+                description="True-time pump activity with start/stop triggers and runtimes"
+              />
+            )}
 
             {/* Structured Audit Events Feed */}
             <div className="space-y-3">
@@ -915,35 +1002,7 @@ function InfoRow({ label, value, mono }: { label: string; value: unknown; mono?:
   )
 }
 
-function ChartCard({ title, data, dataKey, color, stepLine = false, yDomain }: {
-  title: string
-  data: Record<string, unknown>[]
-  dataKey: string
-  color: string
-  stepLine?: boolean
-  yDomain?: [number, number]
-}) {
-  return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 min-w-0">
-      <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">{title}</h4>
-      <div className="h-48 w-full">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-          <LineChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#94a3b8' }} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} domain={yDomain} />
-            <Tooltip
-              contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-              labelStyle={{ color: '#94a3b8', fontSize: 11 }}
-              itemStyle={{ color: color }}
-            />
-            <Line type={stepLine ? 'stepAfter' : 'monotone'} dataKey={dataKey} stroke={color} dot={false} strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  )
-}
+
 
 function SimulatedLCD({ line1, line2 }: { line1?: unknown; line2?: unknown }) {
   const l1 = typeof line1 === 'string' ? line1 : String(line1 ?? '                ')
