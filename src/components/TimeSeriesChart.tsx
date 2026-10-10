@@ -4,7 +4,7 @@ import { ZoomIn, ZoomOut, RotateCcw, Link2, Unlink } from 'lucide-react'
 
 export interface ChartEventMarker {
   time: number
-  type: 'pump_start' | 'pump_stop' | 'fault' | 'info'
+  type: 'pump_start' | 'pump_stop' | 'pump_force' | 'fault' | 'info'
   label: string
   description?: string
   trigger?: string
@@ -128,6 +128,7 @@ export default function TimeSeriesChart({
           const isStart = ev.type === 'pump_start'
           const isStop = ev.type === 'pump_stop'
           const isFault = ev.type === 'fault'
+          const isForce = ev.type === 'pump_force' || ev.label?.toLowerCase().includes('force')
           const symColor = isStart ? '#10b981' : isFault ? '#ef4444' : isStop ? '#64748b' : '#3b82f6'
 
           markPointData.push({
@@ -136,7 +137,9 @@ export default function TimeSeriesChart({
               ev.time,
               yAxisType === 'pump_state'
                 ? isStart
-                  ? 2
+                  ? isForce
+                    ? 3
+                    : 2
                   : 0
                 : yAxisType === 'binary'
                 ? isStart
@@ -145,15 +148,20 @@ export default function TimeSeriesChart({
                 : 0,
             ],
             value: ev.label,
-            symbol: 'pin',
-            symbolSize: 28,
-            symbolOffset: [0, -10],
+            symbol: 'circle',
+            symbolSize: 4,
+            symbolOffset: [0, 0],
             itemStyle: {
               color: symColor,
               borderColor: '#ffffff',
-              borderWidth: 1.5,
-              shadowColor: 'rgba(0, 0, 0, 0.5)',
-              shadowBlur: 4,
+              borderWidth: 1,
+            },
+            emphasis: {
+              scale: 1.25,
+              itemStyle: {
+                borderColor: '#ffffff',
+                borderWidth: 1.5,
+              },
             },
             label: {
               show: false,
